@@ -7,9 +7,11 @@ const UsuarioSchema = Schema({
     },
     apellido: {
         type: String,
+        required: true
     },
     dni: { 
         type: Number,
+        required: true
     },
     email: {
         type: String,
@@ -28,13 +30,8 @@ const UsuarioSchema = Schema({
     direccion: {
         type: Object,
     },
-    favoritos: {
-        type: Array,
-        default: []
-    },
-    rol: {
-        type: String,
-    },
+    nombreApellido: {type: String,},
+    rol:{type: String}
 });
 
 module.exports = model('Usuario', UsuarioSchema);

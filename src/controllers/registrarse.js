@@ -1,39 +1,106 @@
 const Usuario = require('../models/usuario');
 const CryptoJS = require('crypto-js');
 
-//registrarse
+// Crea usuario
 const registrarse = async (req, res) => {
     try {
-        const { nombre, apellido, dni, email, password, direccion, telefono, rol } = req.body; 
-    
-    //busco si ya esxiste el email
-    const usuario = await Usuario.findOne({ email });
-    if (usuario) {
-        return res.status(400).json({ message: 'El email ya esta registrado' });
-    } else {
-        //cifro pass
-        const passwordCifrado = CryptoJS.AES.encrypt(
-            password,
-            process.env.PASS_SEC
-        ).toString();
+        const { nombre, apellido, dni, email, password, foto, telefono, direccion, rol } = req.body;
+        console.log("Data recibida:", req.body);
 
-        const nuevoUsuario = await Usuario.create({
+        // Validación de campos obligatorios
+        if (
+            !nombre?.trim() ||
+            !apellido?.trim() ||
+            !dni?.trim() ||
+            !email?.trim() ||
+            !password?.trim() ||
+            !telefono?.area ||
+            !telefono?.numero
+        ) {
+            return res.status(400).json({ message: "Faltan campos obligatorios" });
+        }
+
+        // Buscar duplicados (comparación sin mayúsculas/minúsculas)
+        const nombreLower = nombre.trim().toLowerCase();
+        const apellidoLower = apellido.trim().toLowerCase();
+        const emailLower = email.trim().toLowerCase();
+
+        const existeNombreApellido = await Usuario.findOne({
+            nombre: { $regex: new RegExp(`^${nombreLower}$`, 'i') },
+            apellido: { $regex: new RegExp(`^${apellidoLower}$`, 'i') },
+        });
+        if (existeNombreApellido) {
+            return res.status(400).json({
+                message: `Ya existe un usuario con el nombre y apellido: ${nombre} ${apellido}`
+            });
+        }
+
+        const existeEmail = await Usuario.findOne({
+            email: { $regex: new RegExp(`^${emailLower}$`, 'i') },
+        });
+        if (existeEmail) {
+            return res.status(400).json({
+                message: `Ya existe un usuario con el email: ${email}`
+            });
+        }
+
+        const existeDNI = await Usuario.findOne({ dni });
+        if (existeDNI) {
+            return res.status(400).json({
+                message: `Ya existe un usuario con el DNI: ${dni}`
+            });
+        }
+
+        const existeTel = await Usuario.findOne({ "telefono.numero": telefono.numero });
+        if (existeTel) {
+            return res.status(400).json({
+                message: `Ya existe un usuario con el teléfono: ${telefono.numero}`
+            });
+        }
+
+        // Encriptar contraseña
+        if (!process.env.PASS_SEC) {
+            console.error("Falta la variable PASS_SEC en el archivo .env");
+            return res.status(500).json({
+                message: "Error en configuración del servidor. Faltan variables de entorno."
+            });
+        }
+
+        const passwordEncript = CryptoJS.AES.encrypt(password, process.env.PASS_SEC).toString();
+
+        // Crear nuevo usuario
+        const newUsuario = new Usuario({
             nombre,
             apellido,
             dni,
-            email,
-            password: passwordCifrado,
-            direccion,
+            email: emailLower,
+            password: passwordEncript,
+            foto: foto || "",
             telefono,
-            rol
-        });   
+            direccion,
+            rol,
+            nombreApellido: `${nombre} ${apellido}`,
+        });
 
-        await nuevoUsuario.save();
-        return res.status(200).json({ message: "success" });
-    }
+        await newUsuario.save();
+
+        return res.status(201).json({
+            message: "Usuario creado correctamente",
+            usuario: {
+                id: newUsuario._id,
+                nombre: newUsuario.nombre,
+                apellido: newUsuario.apellido,
+                email: newUsuario.email,
+                rol: newUsuario.rol
+            }
+        });
     } catch (error) {
-        console.log(error)
+        console.error("Error al crear usuario:", error);
+        return res.status(500).json({
+            message: "Error interno del servidor",
+            error: error.message
+        });
     }
-}
+};
 
 module.exports = { registrarse };
