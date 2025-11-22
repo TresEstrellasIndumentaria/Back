@@ -1,7 +1,8 @@
 const express = require('express');
 const { 
     traerUsuarios, traerUsuario, traerUsuarioPorDni, modificarUsuario, 
-    eliminarUsuario, modificarPassword
+    eliminarUsuario, modificarPassword,
+    traeUsuariosRol
 } = require('../controllers/usuario');
 
 const router = express.Router();
@@ -12,6 +13,9 @@ router.get('/', traerUsuarios);
 
 //trae usuario por id
 router.get('/:id', traerUsuario);
+
+//trea por rol
+router.get('/rol/:rol', traeUsuariosRol);
 
 //trae usuario por dni
 router.get('/dni/:dni', traerUsuarioPorDni);

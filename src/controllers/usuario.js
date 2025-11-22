@@ -16,6 +16,38 @@ const traerUsuarios = async (req, res) => {
     }
 }
 
+// trae por ROL
+const traeUsuariosRol = async (req, res) => {
+    try {
+        const { rol } = req.params; 
+
+        // Validación básica
+        if (!rol) {
+            return res.status(400).json({
+                msg: "Debe enviar un rol por query."
+            });
+        }
+
+        // Busca usuarios cuyo rolAsignado coincida
+        const usuarios = await Usuario.find({ rolAsignado: rol.toLowerCase() });
+
+        // Si no encuentra nada
+        if (!usuarios.length) {
+            return res.status(404).json({
+                msg: `No se encontraron usuarios con el rol: ${rol}`
+            });
+        }
+
+        res.json(usuarios);
+
+    } catch (error) {
+        console.error("Error al traer usuarios por rol:", error);
+        res.status(500).json({
+            msg: "Error al traer usuarios por rol"
+        });
+    }
+};
+
 //traer usuario por id
 const traerUsuario = async (req, res) => {
     try {
@@ -31,7 +63,7 @@ const traerUsuario = async (req, res) => {
         if (!usuario) {
             return res.status(404).json({ error: 'Usuario no encontrado.' });
         }
-        
+
         res.status(200).json(usuario);
     } catch (error) {
         console.error('Error al traer el usuario:', error);
@@ -59,7 +91,7 @@ const traerUsuarioPorDni = async (req, res) => {
 //modificar usuario
 const modificarUsuario = async (req, res) => {
     try {
-        const { id } = req.params; 
+        const { id } = req.params;
         const { nombre, apellido, dni, email, password, telefono, direccion, isAdmin } = req.body;
 
         const usuario = await Usuario.findById(id); console.log("UserTraido: ", usuario)
@@ -192,6 +224,7 @@ const modificarPassword = async (req, res) => {
 
 module.exports = {
     traerUsuarios,
+    traeUsuariosRol,
     traerUsuario,
     traerUsuarioPorDni,
     modificarUsuario,

@@ -4,7 +4,7 @@ const CryptoJS = require('crypto-js');
 // Crea usuario
 const registrarse = async (req, res) => {
     try {
-        const { nombre, apellido, dni, email, password, foto, telefono, direccion, rol } = req.body;
+        const { nombre, apellido, dni, email, password, foto, telefono, direccion, rolAsignado } = req.body;
         console.log("Data recibida:", req.body);
 
         // Validación de campos obligatorios
@@ -78,7 +78,7 @@ const registrarse = async (req, res) => {
             foto: foto || "",
             telefono,
             direccion,
-            rol,
+            rolAsignado,
             nombreApellido: `${nombre} ${apellido}`,
         });
 
@@ -91,7 +91,7 @@ const registrarse = async (req, res) => {
                 nombre: newUsuario.nombre,
                 apellido: newUsuario.apellido,
                 email: newUsuario.email,
-                rol: newUsuario.rol
+                rolAsignado: newUsuario.rolAsignado
             }
         });
     } catch (error) {

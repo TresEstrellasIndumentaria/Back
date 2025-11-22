@@ -31,7 +31,7 @@ const UsuarioSchema = Schema({
         type: Object,
     },
     nombreApellido: {type: String,},
-    rol:{type: String}
+    rol:{type: String},
 });
 
 module.exports = model('Usuario', UsuarioSchema);
