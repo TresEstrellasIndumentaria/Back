@@ -7,8 +7,10 @@ dotenv.config();
 
 //importo rutas
 const registrarseRoutes = require('./src/routes/registrarse');
-const routerUsuario = require('./src/routes/usuario');
 const routerAuth = require('./src/routes/auth');
+const routerUsuario = require('./src/routes/usuario');
+const routerArticulo = require('./src/routes/articulo');
+
 
 const app = express();
 
@@ -21,8 +23,10 @@ dbConnection();
 
 //declaro rutas
 app.use('/registrarse', registrarseRoutes);
-app.use('/usuarios', routerUsuario);
 app.use('/auth', routerAuth);
+app.use('/usuario', routerUsuario);
+app.use('/articulo', routerArticulo);
+
 
 //puerto
 const PORT = process.env.PORT || 3001;

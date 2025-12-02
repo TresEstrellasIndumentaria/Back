@@ -5,10 +5,6 @@ const CategoriaSchema = Schema({
         type: String,
         required: true
     },
-    descripcion: {
-        type: String,
-        required: true
-    },
 });
 
 module.exports = model('Categoria', CategoriaSchema);

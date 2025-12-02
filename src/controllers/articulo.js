@@ -45,7 +45,7 @@ const crearArticulo = async (req, res) => {
             nombre,
             categoria,
             descripcion,
-            composicion,            
+            composicion,
             vendidoPor,
             precio,
             coste,
@@ -97,20 +97,28 @@ const modificarArticulo = async (req, res) => {
 // ELIMINAR ARTÍCULO
 // =================================
 const eliminarArticulo = async (req, res) => {
-    const { id } = req.params;
 
     try {
-        const articulo = await Articulo.findById(id);
+        const { id } = req.params;
+
+        const articulo = await Articulo.findByIdAndDelete(id);
+
         if (!articulo) {
-            return res.status(404).json({ msg: 'Artículo no encontrado' });
+            return res.status(404).json({
+                message: 'Articulo no encontrado'
+            });
         }
 
-        await articulo.deleteOne();
-
-        res.json({ msg: 'Artículo eliminado correctamente' });
-
+        res.status(200).json({
+            message: 'Articulo eliminado correctamente',
+            idEliminado: id
+        });
     } catch (error) {
-        res.status(500).json({ msg: 'Error al eliminar el artículo', error: error.message });
+        console.error('Error al eliminar articulo:', error);
+        res.status(500).json({
+            message: 'Error al eliminar el articulo',
+            error: error.message
+        });
     }
 };
 
