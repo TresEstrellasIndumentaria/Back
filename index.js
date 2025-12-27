@@ -1,36 +1,39 @@
-const express = require('express');
-const dotenv = require('dotenv');
-const cors = require('cors');
-const dbConnection = require('./src/config/db');
+const express = require("express");
+const dotenv = require("dotenv");
+const cors = require("cors");
+const dbConnection = require("./src/config/db");
 
 dotenv.config();
 
-//importo rutas
-const registrarseRoutes = require('./src/routes/registrarse');
-const routerAuth = require('./src/routes/auth');
-const routerUsuario = require('./src/routes/usuario');
-const routerArticulo = require('./src/routes/articulo');
+//creo admin 
+const createAdmin = require('./src/boostrap/creaAdmin');
 
+const authRoutes = require("./src/routes/auth");
+const personaRoutes = require("./src/routes/persona");
+const routerArticulo = require("./src/routes/articulo");
+const routerCategoria = require("./src/routes/categoria");
 
 const app = express();
 
-//middlewares
+// Middlewares
 app.use(express.json());
 app.use(cors());
 
-// Configuración de la base de datos
+// DB
 dbConnection();
 
-//declaro rutas
-app.use('/registrarse', registrarseRoutes);
-app.use('/auth', routerAuth);
-app.use('/usuario', routerUsuario);
-app.use('/articulo', routerArticulo);
+//disparo createAdmin
+createAdmin();
 
+// Rutas
+app.use("/auth", authRoutes);
+app.use("/personas", personaRoutes);
+app.use("/articulos", routerArticulo);
+app.use("/categorias", routerCategoria);
 
-//puerto
+// Puerto
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
-    console.log("Puerto escuchando en:", PORT);
+    console.log("Servidor escuchando en puerto:", PORT);
 });

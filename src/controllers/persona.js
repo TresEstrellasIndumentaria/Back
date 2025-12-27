@@ -1,10 +1,10 @@
 const mongoose = require('mongoose');
-const Usuario = require('../models/usuario');
+const Usuario = require('../models/persona');
 const CryptoJS = require('crypto-js');
 
 
 //trae usuarios 
-const traerUsuarios = async (req, res) => {
+const traerPersonas = async (req, res) => {
     try {
         const usuarios = await Usuario.find();
         res.json(usuarios);
@@ -17,7 +17,7 @@ const traerUsuarios = async (req, res) => {
 }
 
 // trae por ROL
-const traeUsuariosRol = async (req, res) => {
+const traePersonasRol = async (req, res) => {
     try {
         const { rol } = req.params; 
 
@@ -49,7 +49,7 @@ const traeUsuariosRol = async (req, res) => {
 };
 
 //traer usuario por id
-const traerUsuario = async (req, res) => {
+const traerPersona = async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -72,7 +72,7 @@ const traerUsuario = async (req, res) => {
 };
 
 //trae usuario por DNI
-const traerUsuarioPorDni = async (req, res) => {
+const traerPersonaPorDni = async (req, res) => {
     const { dni } = req.params;
     try {
         const usuario = await Usuario.findOne({ dni });
@@ -89,7 +89,7 @@ const traerUsuarioPorDni = async (req, res) => {
 }
 
 //modificar usuario
-const modificarUsuario = async (req, res) => {
+const modificarPersona = async (req, res) => {
     try {
         const { id } = req.params;
         const { nombre, apellido, dni, email, password, telefono, direccion, isAdmin } = req.body;
@@ -157,7 +157,7 @@ const modificarUsuario = async (req, res) => {
 };
 
 // eliminar usuario
-const eliminarUsuario = async (req, res) => {
+const eliminarPersona = async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -223,11 +223,11 @@ const modificarPassword = async (req, res) => {
 
 
 module.exports = {
-    traerUsuarios,
-    traeUsuariosRol,
-    traerUsuario,
-    traerUsuarioPorDni,
-    modificarUsuario,
-    eliminarUsuario,
+    traerPersonas,
+    traePersonasRol,
+    traerPersona,
+    traerPersonaPorDni,
+    modificarPersona,
+    eliminarPersona,
     modificarPassword
 }

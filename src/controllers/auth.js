@@ -1,108 +1,172 @@
-const Usuario = require('../models/usuario');
+const Persona = require("../models/persona");
+const UsuarioAuth = require("../models/usuarioAuth");
 const CryptoJS = require('crypto-js');
 const jwt = require('jsonwebtoken');
-const { OAuth2Client } = require("google-auth-library");
-const cortaNombreApellido = require('../helpers/cortaNombreApellido');
+
 
 //login clásico
-const login = async (req, res) => { 
-    
+const login = async (req, res) => {
     try {
-        //busco user (tiene q existir para pooder log)
-        const user = await Usuario.findOne({ email: req.body.email });
-        
-        if (!user) { 
-            return res.json({ message: 'Email incorrecto' }); 
+        const { email, password } = req.body;
+
+        const user = await UsuarioAuth.findOne({ email })
+            .populate("personaId");
+
+        if (!user || !user.activo) {
+            return res.status(401).json({
+                message: "Email incorrecto"
+            });
         }
-        else {
-            //si exist, desencripto pass q viene de la DB
-            const hashedPassword = CryptoJS.AES.decrypt(user.password, process.env.PASS_SEC);
-            //paso a string la pass antes desncrip
-            const OriginalPassword = hashedPassword.toString(CryptoJS.enc.Utf8);
-            //comparo la q viene de la DB con la del front
-            //console.log("pass:", hashedPassword)
-            if (OriginalPassword !== req.body.password) {
-                return res.json({ message: 'Contraseña incorrecta' });
+
+        const hashedPassword = CryptoJS.AES.decrypt(
+            user.password,
+            process.env.PASS_SEC
+        );
+
+        const originalPassword = hashedPassword.toString(CryptoJS.enc.Utf8);
+
+        if (originalPassword !== password) {
+            return res.status(401).json({
+                message: "Contraseña incorrecta"
+            });
+        }
+
+        const token = jwt.sign(
+            {
+                id: user._id,
+                roles: user.roles,
+            },
+            process.env.JWT_SEC,
+            //{ expiresIn: "8h" }
+        );
+
+        const persona = user.personaId;
+
+        return res.status(200).json({
+            message: "ok",
+            user: {
+                id: user._id,
+                personaId: persona._id,
+                email: user.email,
+                nombre: persona.nombre,
+                apellido: persona.apellido,
+                telefono: persona.telefono,
+                direccion: persona.direccion,
+                roles: user.roles,
+                token
             }
+        });
 
-            //si el user es correcto CREO el JWT, para mayor seguridad de mi aplicacion, q se asocia con el email del user
-            const token = jwt.sign({ email: user.email }, process.env.JWT_SEC);
-            
-            //normailizo la info q quiero enviar
-            const userLog = {
-                id: user._id,
-                email: user.email,
-                nombre: user.nombre,
-                apellido: user.apellido,
-                telefono: user.telefono,
-                direccion: user.direccion,
-                rol: user.rol,
-                token,
-            };
-            res.json({//res --> del login -->esta info esta alojada en -->user._doc CORROBORAR
-                user: userLog,
-                message: "ok"
+    } catch (error) {
+        console.error("Error login:", error);
+        return res.status(500).json({
+            message: "Error interno del servidor"
+        });
+    }
+};
+
+
+//registrar usuarios
+const registrar = async (req, res) => {
+    try {
+        const {
+            nombre,
+            apellido,
+            dni,
+            email,
+            password,
+            telefono,
+            direccion,
+            nota,
+            roles
+        } = req.body;
+
+        // 🔒 Validaciones obligatorias
+        if (
+            !nombre?.trim() ||
+            !apellido?.trim() ||
+            !dni?.trim() ||
+            !email?.trim()
+        ) {
+            return res.status(400).json({
+                message: "Faltan campos obligatorios"
             });
         }
 
-    } catch (error) {
-        console.log(error);
-    }
-};
+        // Roles normalizados
+        const rolesArray = Array.isArray(roles) ? roles : [roles];
 
-//para log google
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
-//log google
-const googleLogin = async (req, res) => {
-    const { tokenId } = req.body; 
-    try {
-        const ticket = await client.verifyIdToken({
-            idToken: tokenId,
-            audience: process.env.GOOGLE_CLIENT_ID,
-        });
-        const { email, name, picture } = ticket.getPayload(); 
-        
-        //busco el usuario en la DB
-        const buscoUsuario = await Usuario.findOne({ email: email });
-        //sino existe lo REGISTRO
-        if (!buscoUsuario) {
-            const {nombre, apellido} = cortaNombreApellido(name);
-            const usuario = new Usuario({
-                email: email,
-                nombre,
-                apellido,
-                password: "google",
-                foto: picture,
-                isAdmin: false,
-                correoVerificado: true,
+        const esUsuarioSistema = rolesArray.includes("ADMIN") || rolesArray.includes("EMPLEADO");
+
+        // Password obligatorio solo para usuarios del sistema
+        if (esUsuarioSistema && !password?.trim()) {
+            return res.status(400).json({
+                message: "Password obligatorio para usuarios del sistema"
             });
-            await usuario.save();
-            userLog = {...usuario._doc, token: tokenId}; //atento a lo q retorna usuario !! -->user._doc
-        } else {
-            user = buscoUsuario;
-            userLog = {
-                id: user._id,
-                email: user.email,
-                nombre: user.nombre,
-                apellido: user.apellido,
-                foto: user.foto,
-                telefono: user.telefono,
-                direccion: user.direccion,
-                isAdmin: user.isAdmin,
-                favoritos: user.favoritos,
-                correoVerificado: user.correoVerificado,
-                token: tokenId,
-            };
-        }        
-        //console.log("userLog:", userLog);
-        res.status(200).json({ user: userLog, message: "ok" }); 
+        }
+
+        const emailLower = email.trim().toLowerCase();
+
+        // Verificar duplicados
+        const existePersona = await Persona.findOne({
+            $or: [{ dni }, { email: emailLower }]
+        });
+        //existe una persona con ese DNI o email
+        if (existePersona) {
+            return res.status(400).json({
+                message: "Ya existe una persona con ese DNI o email"
+            });
+        }
+
+        // Crear Persona
+        const persona = await Persona.create({
+            nombre,
+            apellido,
+            dni,
+            email: emailLower,
+            telefono,
+            direccion,
+            nota,
+            roles: rolesArray
+        });
+
+        let usuarioAuth = null;
+        //encripto pass y creo usuarioAuth
+        if (esUsuarioSistema) {
+            const passwordEncript = CryptoJS.AES.encrypt(
+                password,
+                process.env.PASS_SEC
+            ).toString();
+            
+            usuarioAuth = await UsuarioAuth.create({
+                personaId: persona._id,
+                email: emailLower,
+                password: passwordEncript,
+                roles: rolesArray
+            });
+        }
+
+        return res.status(201).json({
+            message: "Registro exitoso",
+            /* persona,
+            usuarioAuth: usuarioAuth
+                ? {
+                    id: usuarioAuth._id,
+                    email: usuarioAuth.email,
+                    roles: usuarioAuth.roles
+                }
+                : null */
+        });
+
     } catch (error) {
-        res.status(401).json({ message: "Invalid token", error: error.message });
+        console.error("Error al registrar:", error);
+        return res.status(500).json({
+            message: "Error interno del servidor"
+        });
     }
 };
-
 
 module.exports = {
     login,
-    googleLogin
+    registrar
 }

@@ -6,7 +6,7 @@ const {
     crearCategoria,
     editarCategoria,
     eliminarCategoria
-} = require("../controllers/categorias.controller");
+} = require("../controllers/categoria");
 
 router.get("/", getCategorias);
 router.post("/", crearCategoria);

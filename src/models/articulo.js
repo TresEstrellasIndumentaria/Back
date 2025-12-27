@@ -12,10 +12,6 @@ const ArticuloSchema = Schema({
     descripcion: {
         type: String,
     },
-    vendidoPor: {
-        type: String, //unidad o peso/volumen
-        
-    },
     precio: {
         type: Number,
         required: true

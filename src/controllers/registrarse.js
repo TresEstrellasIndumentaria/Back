@@ -1,11 +1,11 @@
-const Usuario = require('../models/usuario');
+const Usuario = require('../models/persona');
 const CryptoJS = require('crypto-js');
 
 // Crea usuario
 const registrarse = async (req, res) => {
     try {
         const { nombre, apellido, dni, email, password, foto, telefono, direccion, rolAsignado } = req.body;
-        console.log("Data recibida:", req.body);
+        //console.log("Data recibida:", req.body);
 
         // Validación de campos obligatorios
         if (

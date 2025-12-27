@@ -1,5 +1,5 @@
 const Articulo = require('../models/articulo');
-
+const Categoria = require('../models/categoriaArticulo');
 // ================================
 // TRAER TODOS LOS ARTÍCULOS
 // ================================
@@ -33,12 +33,18 @@ const traerArticulo = async (req, res) => {
 // CREAR ARTÍCULO
 // ================================
 const crearArticulo = async (req, res) => {
-    const { nombre, categoria, descripcion, vendidoPor, precio, coste, composicion, artCompuesto } = req.body;
+    const { nombre, categoria, descripcion, precio, coste, composicion, artCompuesto } = req.body;
 
     try {
-        // Validaciones básicas
         if (!nombre || nombre.trim() === "") {
             return res.status(400).json({ msg: 'El nombre es obligatorio' });
+        }
+
+        // Verificar que la categoría exista
+        const categoriaDB = await Categoria.findOne({ nombre: categoria });
+
+        if (!categoriaDB) {
+            return res.status(400).json({ msg: 'La categoría no existe' });
         }
 
         const nuevoArticulo = new Articulo({
@@ -46,7 +52,6 @@ const crearArticulo = async (req, res) => {
             categoria,
             descripcion,
             composicion,
-            vendidoPor,
             precio,
             coste,
             artCompuesto,
@@ -54,13 +59,22 @@ const crearArticulo = async (req, res) => {
 
         await nuevoArticulo.save();
 
+        // 🔼 Incrementar contador
+        await Categoria.findByIdAndUpdate(
+            categoriaDB._id,
+            { $inc: { cantidadArticulos: 1 } }
+        );
+
         res.status(201).json({
             msg: 'Artículo creado correctamente',
             articulo: nuevoArticulo
         });
 
     } catch (error) {
-        res.status(500).json({ msg: 'Error al crear el artículo', error: error.message });
+        res.status(500).json({
+            msg: 'Error al crear el artículo',
+            error: error.message
+        });
     }
 };
 
@@ -97,11 +111,11 @@ const modificarArticulo = async (req, res) => {
 // ELIMINAR ARTÍCULO
 // =================================
 const eliminarArticulo = async (req, res) => {
-
     try {
         const { id } = req.params;
 
-        const articulo = await Articulo.findByIdAndDelete(id);
+        // Primero obtener el artículo
+        const articulo = await Articulo.findById(id);
 
         if (!articulo) {
             return res.status(404).json({
@@ -109,10 +123,25 @@ const eliminarArticulo = async (req, res) => {
             });
         }
 
+        // Buscar la categoría asociada
+        const categoriaDB = await Categoria.findOne({ nombre: articulo.categoria });
+
+        // Eliminar artículo
+        await Articulo.findByIdAndDelete(id);
+
+        // 🔽 Decrementar contador (sin ir a negativo)
+        if (categoriaDB) {
+            await Categoria.findByIdAndUpdate(
+                categoriaDB._id,
+                { $inc: { cantidadArticulos: -1 } }
+            );
+        }
+
         res.status(200).json({
             message: 'Articulo eliminado correctamente',
             idEliminado: id
         });
+
     } catch (error) {
         console.error('Error al eliminar articulo:', error);
         res.status(500).json({
@@ -121,6 +150,7 @@ const eliminarArticulo = async (req, res) => {
         });
     }
 };
+
 
 module.exports = {
     traerArticulos,

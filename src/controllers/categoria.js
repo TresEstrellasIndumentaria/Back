@@ -1,4 +1,5 @@
-const Categoria = require("../models/Categoria");
+const Categoria = require("../models/categoriaArticulo");
+const normalizar = require("../helpers/normalizaNombreArt");
 
 // ⬇ GET TODAS
 const getCategorias = async (req, res) => {
@@ -12,19 +13,40 @@ const getCategorias = async (req, res) => {
 
 // ⬇ CREAR
 const crearCategoria = async (req, res) => {
-    const { nombre } = req.body;
-
     try {
-        const existe = await Categoria.findOne({ nombre });
-        if (existe) {
-            return res.status(400).json({ msg: "La categoría ya existe" });
+        const { nombre } = req.body;
+
+        if (!nombre) {
+            return res.status(400).json({
+                error: "El nombre es obligatorio"
+            });
         }
 
-        const nueva = await Categoria.create({ nombre });
-        res.json({ msg: "Categoría creada", categoria: nueva });
+        const nombreNormalizado = normalizar(nombre);
+        const existe = await Categoria.findOne({ nombreNormalizado });
+
+        if (existe) {
+            return res.status(400).json({
+                error: "La categoría ya existe"
+            });
+        }
+
+        const nuevaCategoria = new Categoria({
+            nombre: nombre.trim(),
+            nombreNormalizado
+        });
+
+        await nuevaCategoria.save();
+
+        return res.status(201).json(nuevaCategoria);
 
     } catch (error) {
-        res.status(500).json({ msg: "Error al crear categoría" });
+        console.error("Error al crear categoría:", error);
+
+        return res.status(500).json({
+            error: "Error al crear categoría",
+            detalle: error.message
+        });
     }
 };
 
