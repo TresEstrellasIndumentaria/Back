@@ -13,6 +13,10 @@ const CategoriaSchema = Schema({
     cantidadArticulos: {
         type: Number,
         default: 0
+    },
+    esProveedor: {
+        type: Boolean,
+        default: false
     }
 });
 

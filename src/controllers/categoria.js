@@ -14,7 +14,7 @@ const getCategorias = async (req, res) => {
 // ⬇ CREAR
 const crearCategoria = async (req, res) => {
     try {
-        const { nombre } = req.body;
+        const { nombre, esProveedor } = req.body;
 
         if (!nombre) {
             return res.status(400).json({
@@ -33,7 +33,8 @@ const crearCategoria = async (req, res) => {
 
         const nuevaCategoria = new Categoria({
             nombre: nombre.trim(),
-            nombreNormalizado
+            nombreNormalizado,
+            esProveedor: Boolean(esProveedor)
         });
 
         await nuevaCategoria.save();
@@ -53,14 +54,38 @@ const crearCategoria = async (req, res) => {
 // ⬇ EDITAR
 const editarCategoria = async (req, res) => {
     const { id } = req.params;
-    const { nombre } = req.body;
+    const { nombre, esProveedor } = req.body;
 
     try {
-        const categoria = await Categoria.findByIdAndUpdate(
-            id,
-            { nombre },
-            { new: true }
-        );
+        const categoria = await Categoria.findById(id);
+        if (!categoria) {
+            return res.status(404).json({ msg: "Categoría no encontrada" });
+        }
+
+        if (nombre !== undefined) {
+            if (!String(nombre).trim()) {
+                return res.status(400).json({ msg: "El nombre no puede estar vacío" });
+            }
+
+            const nombreNormalizado = normalizar(nombre);
+            const existe = await Categoria.findOne({
+                nombreNormalizado,
+                _id: { $ne: id }
+            });
+
+            if (existe) {
+                return res.status(400).json({ msg: "La categoría ya existe" });
+            }
+
+            categoria.nombre = String(nombre).trim();
+            categoria.nombreNormalizado = nombreNormalizado;
+        }
+
+        if (esProveedor !== undefined) {
+            categoria.esProveedor = Boolean(esProveedor);
+        }
+
+        await categoria.save();
 
         res.json({ msg: "Categoría actualizada", categoria });
 

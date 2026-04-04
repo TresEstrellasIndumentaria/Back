@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Usuario = require('../models/persona');
+const UsuarioAuth = require('../models/usuarioAuth');
 const CryptoJS = require('crypto-js');
 
 
@@ -19,31 +20,29 @@ const traerPersonas = async (req, res) => {
 // trae por ROL
 const traePersonasRol = async (req, res) => {
     try {
-        const { rol } = req.params; 
+        const { rol } = req.params; // ← ahora sí es string
 
-        // Validación básica
         if (!rol) {
             return res.status(400).json({
-                msg: "Debe enviar un rol por query."
+                msg: "Debe enviar un rol",
             });
         }
 
-        // Busca usuarios cuyo rolAsignado coincida
-        const usuarios = await Usuario.find({ rolAsignado: rol.toLowerCase() });
+        const usuarios = await Usuario.find({
+            rol: rol.toUpperCase(), // IMPORTANTE
+        });
 
-        // Si no encuentra nada
         if (!usuarios.length) {
             return res.status(404).json({
-                msg: `No se encontraron usuarios con el rol: ${rol}`
+                msg: `No se encontraron usuarios con el rol: ${rol}`,
             });
         }
 
         res.json(usuarios);
-
     } catch (error) {
         console.error("Error al traer usuarios por rol:", error);
         res.status(500).json({
-            msg: "Error al traer usuarios por rol"
+            msg: "Error al traer usuarios por rol",
         });
     }
 };
@@ -92,67 +91,123 @@ const traerPersonaPorDni = async (req, res) => {
 const modificarPersona = async (req, res) => {
     try {
         const { id } = req.params;
-        const { nombre, apellido, dni, email, password, telefono, direccion, isAdmin } = req.body;
+        const { password, telefono, direccion, nota, } = req.body;
 
-        const usuario = await Usuario.findById(id); console.log("UserTraido: ", usuario)
-        if (!usuario) return res.status(404).json({ message: "Usuario no encontrado" });
-
-        // Verificar duplicados (sin contar el mismo usuario)
-        const emailLower = email?.trim().toLowerCase();
-        const nombreLower = nombre?.trim().toLowerCase();
-        const apellidoLower = apellido?.trim().toLowerCase();
-
-        const existeEmail = await Usuario.findOne({
-            _id: { $ne: id },
-            email: { $regex: new RegExp(`^${emailLower}$`, 'i') },
-        });
-        if (existeEmail) return res.status(400).json({ message: `Ya existe otro usuario con el email: ${email}` });
-
-        const existeDNI = await Usuario.findOne({ _id: { $ne: id }, dni });
-        if (existeDNI) return res.status(400).json({ message: `Ya existe otro usuario con el DNI: ${dni}` });
-
-        const existeTel = await Usuario.findOne({
-            _id: { $ne: id },
-            "telefono.numero": telefono?.numero
-        });
-        if (existeTel)
-            return res.status(400).json({ message: `Ya existe otro usuario con el teléfono: ${telefono?.numero}` });
-
-        // Si se envía password nueva, la encripta
-        let passwordEncript = usuario.password;
-        if (password && password.trim() !== "") {
-            if (!process.env.PASS_SEC)
-                return res.status(500).json({ message: "Error en configuración del servidor" });
-            passwordEncript = CryptoJS.AES.encrypt(password, process.env.PASS_SEC).toString();
+        const usuario = await Usuario.findById({ _id: id });
+        if (!usuario) {
+            return res.status(404).json({ message: "Usuario no encontrado" });
         }
 
-        // Actualiza los campos
-        usuario.nombre = nombre || usuario.nombre;
-        usuario.apellido = apellido || usuario.apellido;
-        usuario.dni = dni || usuario.dni;
-        usuario.email = emailLower || usuario.email;
-        usuario.password = passwordEncript;
-        usuario.telefono = telefono || usuario.telefono;
-        usuario.direccion = direccion || usuario.direccion;
-        usuario.isAdmin = isAdmin ?? usuario.isAdmin;
-        usuario.nombreApellido = `${usuario.nombre} ${usuario.apellido}`;
+        // Password
+        if (password && password.trim() !== "") {
+            if (!process.env.PASS_SEC) {
+                return res.status(500).json({ message: "Error de configuración" });
+            }
+            usuario.password = CryptoJS.AES.encrypt(
+                password,
+                process.env.PASS_SEC
+            ).toString();
+        }
+
+        // Campos permitidos
+        if (telefono) usuario.telefono = telefono;
+        if (direccion) usuario.direccion = direccion;
+        if (nota) usuario.nota = nota;
 
         await usuario.save();
 
         return res.status(200).json({
             message: "Usuario modificado correctamente",
-            usuario: {
-                id: usuario._id,
-                nombre: usuario.nombre,
-                apellido: usuario.apellido,
-                email: usuario.email,
-                isAdmin: usuario.isAdmin
-            }
         });
 
     } catch (error) {
         console.error("Error al modificar usuario:", error);
-        return res.status(500).json({ message: "Error interno del servidor", error: error.message });
+        return res.status(500).json({
+            message: "Error interno del servidor",
+            error: error.message
+        });
+    }
+};
+
+// modificar proveedor/cliente (sin password)
+const modificarProveedorCliente = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const {
+            nombre,
+            apellido,
+            dni,
+            email,
+            telefono,
+            direccion,
+            nota
+        } = req.body;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ msg: 'El ID proporcionado no es valido.' });
+        }
+
+        const usuario = await Usuario.findById(id);
+        if (!usuario) {
+            return res.status(404).json({ msg: 'Usuario no encontrado' });
+        }
+
+        if (!['CLIENTE', 'PROVEEDOR'].includes(usuario.rol)) {
+            return res.status(400).json({
+                msg: 'Este endpoint solo permite modificar CLIENTE o PROVEEDOR'
+            });
+        }
+
+        if (req.body.password !== undefined) {
+            return res.status(400).json({
+                msg: 'No se permite modificar password en este endpoint'
+            });
+        }
+
+        if (nombre !== undefined) usuario.nombre = nombre;
+        if (apellido !== undefined) usuario.apellido = apellido;
+        if (telefono !== undefined) usuario.telefono = telefono;
+        if (direccion !== undefined) usuario.direccion = direccion;
+        if (nota !== undefined) usuario.nota = nota;
+
+        if (dni !== undefined) {
+            const dniNum = Number(dni);
+            if (!Number.isFinite(dniNum)) {
+                return res.status(400).json({ msg: 'DNI invalido' });
+            }
+            usuario.dni = dniNum;
+        }
+
+        if (email !== undefined) {
+            const emailNormalizado = String(email).trim().toLowerCase();
+            if (!emailNormalizado) {
+                return res.status(400).json({ msg: 'Email invalido' });
+            }
+
+            const emailExistente = await Usuario.findOne({
+                email: emailNormalizado,
+                _id: { $ne: usuario._id }
+            });
+
+            if (emailExistente) {
+                return res.status(400).json({ msg: 'El email ya esta en uso' });
+            }
+
+            usuario.email = emailNormalizado;
+        }
+
+        await usuario.save();
+
+        return res.status(200).json({
+            msg: 'Proveedor/cliente modificado correctamente',
+            usuario
+        });
+    } catch (error) {
+        console.error('Error al modificar proveedor/cliente:', error);
+        return res.status(500).json({
+            msg: 'Error interno del servidor',
+            error: error.message
+        });
     }
 };
 
@@ -182,44 +237,53 @@ const eliminarPersona = async (req, res) => {
     }
 };
 
-
-//modificar contraseña
-const modificarPassword = async (req, res) => {
-    const { id } = req.params;
-    let { password } = req.body;
-
-    // Verificar si password es válido
-    if (!password || typeof password !== "string") {
-        return res.status(400).json({ msg: "Contraseña inválida" });
-    }
-
-    // Verificar si la clave secreta está definida
-    if (!process.env.PASS_SEC) {
-        console.error("Error: SECRET_KEY no está definida en el archivo de entorno.");
-        return res.status(500).json({ msg: "Error del servidor: Clave secreta no definida" });
-    }
-
+//modificar datos personales - el usuario logueado PUEDE modif su pass y email
+const modificarMisDatos = async (req, res) => {
     try {
-        // Encriptar la contraseña
-        const passwordEncriptada = CryptoJS.AES.encrypt(password, process.env.PASS_SEC).toString();
+        const { id } = req.user; // 👈 UsuarioAuth._id
 
-        // Actualizar el usuario
-        const usuario = await Usuario.findByIdAndUpdate(
-            id,
-            { password: passwordEncriptada },
-            { new: true } // Devuelve el usuario actualizado
-        );
+        const { passwordActual, passwordNueva } = req.body;
 
+        const usuario = await UsuarioAuth.findById(id);
         if (!usuario) {
             return res.status(404).json({ msg: 'Usuario no encontrado' });
         }
 
-        res.json({ msg: 'success' });
+        // PASSWORD
+        if (passwordNueva) {
+            if (!passwordActual) {
+                return res.status(400).json({
+                    msg: 'Debe ingresar la contraseña actual'
+                });
+            }
+
+            const passwordDB = CryptoJS.AES.decrypt(
+                usuario.password,
+                process.env.PASS_SEC
+            ).toString(CryptoJS.enc.Utf8);
+
+            if (passwordDB !== passwordActual) {
+                return res.status(400).json({
+                    msg: 'Contraseña actual incorrecta'
+                });
+            }
+
+            usuario.password = CryptoJS.AES.encrypt(
+                passwordNueva,
+                process.env.PASS_SEC
+            ).toString();
+        }
+
+        await usuario.save();
+
+        res.json({ msg: 'Datos actualizados correctamente' });
+
     } catch (error) {
-        console.error('Error al modificar el usuario:', error);
-        res.status(500).json({ msg: 'Contraseña incorrecta' });
+        console.error(error);
+        res.status(500).json({ msg: 'Error del servidor' });
     }
 };
+
 
 
 module.exports = {
@@ -228,6 +292,21 @@ module.exports = {
     traerPersona,
     traerPersonaPorDni,
     modificarPersona,
+    modificarProveedorCliente,
     eliminarPersona,
-    modificarPassword
+    modificarMisDatos
 }
+
+
+
+/* 
+
+Próximo paso (vos elegís)
+
+1️⃣ Agregar confirmación modal antes de guardar
+2️⃣ Forzar logout si cambia el password
+3️⃣ Validaciones fuertes (regex password)
+4️⃣ Integrarlo con Redux
+
+
+*/

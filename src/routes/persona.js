@@ -1,13 +1,16 @@
 const express = require('express');
-const { 
+const {
     traerPersonas,
     traePersonasRol,
     traerPersona,
     traerPersonaPorDni,
     modificarPersona,
+    modificarProveedorCliente,
     eliminarPersona,
-    modificarPassword
+    modificarMisDatos
 } = require('../controllers/persona');
+const verifyToken = require("../middlewares/verifyToken");
+const isAdmin = require("../middlewares/isAdmin");
 
 const router = express.Router();
 
@@ -25,14 +28,25 @@ router.get('/rol/:rol', traePersonasRol);
 router.get('/dni/:dni', traerPersonaPorDni);
 
 //modificar usuario
-router.put('/modifica/:id', modificarPersona);
+router.put(
+    '/modifica/:id',
+    verifyToken,
+    isAdmin,
+    modificarPersona
+);
 
-//modif pass
-router.put('/modificaPass/:id', modificarPassword);
+// modificar proveedor/cliente sin password
+router.put(
+    '/modifica-cliente-proveedor/:id',
+    verifyToken,
+    isAdmin,
+    modificarProveedorCliente
+);
 
 //eliminar usuario
 router.delete('/eliminar/:id', eliminarPersona);
 
-
+//modif datos personales, solo pass usuario logueado
+router.put('/mis-datos', verifyToken, modificarMisDatos);
 
 module.exports = router;

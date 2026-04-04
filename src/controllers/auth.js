@@ -78,40 +78,32 @@ const registrar = async (req, res) => {
             telefono,
             direccion,
             nota,
-            roles
+            rol = "CLIENTE" // default
         } = req.body;
 
-        // 🔒 Validaciones obligatorias
-        if (
-            !nombre?.trim() ||
-            !apellido?.trim() ||
-            !dni?.trim() ||
-            !email?.trim()
-        ) {
+        // Validaciones básicas
+        if (!nombre || !apellido || !dni || !email) {
             return res.status(400).json({
                 message: "Faltan campos obligatorios"
             });
         }
 
-        // Roles normalizados
-        const rolesArray = Array.isArray(roles) ? roles : [roles];
+        const emailLower = email.trim().toLowerCase();
+        const rolUpper = rol.toUpperCase();
 
-        const esUsuarioSistema = rolesArray.includes("ADMIN") || rolesArray.includes("EMPLEADO");
-
-        // Password obligatorio solo para usuarios del sistema
-        if (esUsuarioSistema && !password?.trim()) {
+        // Validar rol permitido
+        const rolesPermitidos = ["ADMIN", "EMPLEADO", "CLIENTE", "PROVEEDOR"];
+        if (!rolesPermitidos.includes(rolUpper)) {
             return res.status(400).json({
-                message: "Password obligatorio para usuarios del sistema"
+                message: "Rol inválido"
             });
         }
-
-        const emailLower = email.trim().toLowerCase();
 
         // Verificar duplicados
         const existePersona = await Persona.findOne({
             $or: [{ dni }, { email: emailLower }]
         });
-        //existe una persona con ese DNI o email
+
         if (existePersona) {
             return res.status(400).json({
                 message: "Ya existe una persona con ese DNI o email"
@@ -127,35 +119,38 @@ const registrar = async (req, res) => {
             telefono,
             direccion,
             nota,
-            roles: rolesArray
+            rol: rolUpper,
+            nombreApellido: `${nombre} ${apellido}`
         });
 
+        // Crear UsuarioAuth SOLO si es usuario del sistema
         let usuarioAuth = null;
-        //encripto pass y creo usuarioAuth
+        const esUsuarioSistema = rolUpper === "ADMIN" || rolUpper === "EMPLEADO";
+
         if (esUsuarioSistema) {
+            if (!password) {
+                return res.status(400).json({
+                    message: "Password obligatorio para usuarios del sistema"
+                });
+            }
+
             const passwordEncript = CryptoJS.AES.encrypt(
                 password,
                 process.env.PASS_SEC
             ).toString();
-            
+
             usuarioAuth = await UsuarioAuth.create({
                 personaId: persona._id,
                 email: emailLower,
                 password: passwordEncript,
-                roles: rolesArray
+                rol: rolUpper
             });
         }
 
         return res.status(201).json({
             message: "Registro exitoso",
-            /* persona,
-            usuarioAuth: usuarioAuth
-                ? {
-                    id: usuarioAuth._id,
-                    email: usuarioAuth.email,
-                    roles: usuarioAuth.roles
-                }
-                : null */
+            persona,
+            usuarioAuth
         });
 
     } catch (error) {
@@ -165,6 +160,7 @@ const registrar = async (req, res) => {
         });
     }
 };
+
 
 module.exports = {
     login,

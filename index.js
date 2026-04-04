@@ -11,7 +11,10 @@ const createAdmin = require('./src/boostrap/creaAdmin');
 const authRoutes = require("./src/routes/auth");
 const personaRoutes = require("./src/routes/persona");
 const routerArticulo = require("./src/routes/articulo");
+const routerArticuloProveedor = require("./src/routes/articuloProveedor");
 const routerCategoria = require("./src/routes/categoria");
+const ordenCompraRoutes = require('./src/routes/ordenCompra');
+
 
 const app = express();
 
@@ -29,7 +32,9 @@ createAdmin();
 app.use("/auth", authRoutes);
 app.use("/personas", personaRoutes);
 app.use("/articulos", routerArticulo);
+app.use("/articulosProveedor", routerArticuloProveedor);
 app.use("/categorias", routerCategoria);
+app.use('/ordenesCompraProv', ordenCompraRoutes);
 
 // Puerto
 const PORT = process.env.PORT || 3001;

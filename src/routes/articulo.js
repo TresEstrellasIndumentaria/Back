@@ -1,21 +1,38 @@
 const express = require('express');
-const { crearArticulo, traerArticulos, traerArticulo, modificarArticulo, eliminarArticulo } = require('../controllers/articulo');
+const {
+    crearArticulo,
+    traerArticulos,
+    traerArticulo,
+    modificarArticulo,
+    eliminarArticulo,
+    modificarStockArticulo,
+    obtenerHistorialInventario
+} = require('../controllers/articulo');
+const verifyToken = require('../middlewares/verifyToken');
+const isAdmin = require('../middlewares/isAdmin');
 
 const router = express.Router();
 
-//crea art
+// crea art
 router.post("/", crearArticulo);
 
-//trae todos
+// historial
+router.get('/historial-inventario', verifyToken, isAdmin, obtenerHistorialInventario);
+
+// trae todos
 router.get('/', traerArticulos);
 
-//trae  por id
+// trae por id
 router.get('/:id', traerArticulo);
 
-//modificar 
+// modificar
 router.put('/modifica/:id', modificarArticulo);
 
-//eliminar art
+// modificar stock
+router.put('/:id/stock', modificarStockArticulo);
+router.patch('/:id/stock', modificarStockArticulo);
+
+// eliminar art
 router.delete('/eliminar/:id', eliminarArticulo);
 
 module.exports = router;
