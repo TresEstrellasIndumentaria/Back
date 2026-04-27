@@ -22,6 +22,12 @@ const PersonaSchema = new Schema(
         password: {
             type: String,
         },
+        numeroCliente: {
+            type: Number
+        },
+        razonSocial: {
+            type: String,
+        },
         telefono: {
             type: Object,
         },
