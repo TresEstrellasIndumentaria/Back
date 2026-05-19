@@ -25,6 +25,9 @@ const PersonaSchema = new Schema(
         numeroCliente: {
             type: Number
         },
+        numeroProveedor: {
+            type: Number
+        },
         razonSocial: {
             type: String,
         },
@@ -44,6 +47,10 @@ const PersonaSchema = new Schema(
             type: String,
             enum: ["ADMIN", "EMPLEADO", "CLIENTE", "PROVEEDOR"],
             required: true,
+        },
+        permisos: {
+            type: [String],
+            default: [],
         },
     },
     { timestamps: true }

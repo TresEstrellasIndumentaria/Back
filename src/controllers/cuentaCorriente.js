@@ -1,5 +1,8 @@
+const mongoose = require('mongoose');
 const Remito = require('../models/remito');
 const Recibo = require('../models/recibo');
+const OrdenCompra = require('../models/ordenDeCompra');
+const PagoProveedor = require('../models/pagoProveedor');
 
 const limpiarTexto = (valor) => {
     if (valor === undefined || valor === null) return '';
@@ -7,6 +10,7 @@ const limpiarTexto = (valor) => {
 };
 
 const normalizarFecha = (fecha) => new Date(fecha).getTime();
+const estadoCuentaPorSaldo = (saldo) => (Number(saldo || 0) > 0 ? 'DEUDOR' : 'PAGADA');
 
 const construirMovimientoRemito = (remito) => ({
     id: String(remito._id),
@@ -14,9 +18,9 @@ const construirMovimientoRemito = (remito) => ({
     fecha: remito.createdAt,
     numero: remito.numeroRemitoFormateado || `R-${String(remito.numeroRemito).padStart(6, '0')}`,
     comprobante: remito.numeroRemitoFormateado || `R-${String(remito.numeroRemito).padStart(6, '0')}`,
-    concepto: `Remito ${remito.estado === 'CANCELADO' ? 'cancelado' : 'emitido'}`,
+    concepto: `Remito ${remito.estado === 'PAGADO' ? 'pagado' : 'pendiente'}`,
     estado: remito.estado,
-    debe: remito.estado === 'CANCELADO' ? 0 : Number(remito.importeTotal || 0),
+    debe: remito.estado === 'PENDIENTE' ? Number(remito.importeTotal || 0) : 0,
     haber: 0,
     saldo: 0,
     detalle: {
@@ -42,6 +46,42 @@ const construirMovimientoRecibo = (recibo) => ({
         reciboId: recibo._id,
         importe: Number(recibo.importe || 0),
         medioPago: recibo.medioPago || ''
+    }
+});
+
+const construirMovimientoOrdenCompra = (orden) => ({
+    id: String(orden._id),
+    tipo: 'ORDEN_COMPRA',
+    fecha: orden.fechaOrden || orden.createdAt,
+    numero: `OC-${String(orden._id).slice(-6).toUpperCase()}`,
+    comprobante: `OC-${String(orden._id).slice(-6).toUpperCase()}`,
+    concepto: `Orden de compra ${orden.estado}`,
+    estado: orden.estado,
+    debe: Number(orden.totalOrden || 0),
+    haber: 0,
+    saldo: 0,
+    detalle: {
+        ordenCompraId: orden._id,
+        totalOrden: Number(orden.totalOrden || 0),
+        cantidadItems: Array.isArray(orden.items) ? orden.items.length : 0
+    }
+});
+
+const construirMovimientoPagoProveedor = (pago) => ({
+    id: String(pago._id),
+    tipo: 'PAGO_PROVEEDOR',
+    fecha: pago.fechaPago || pago.createdAt,
+    numero: pago.numeroPagoFormateado || `PP-${String(pago.numeroPago).padStart(6, '0')}`,
+    comprobante: pago.numeroPagoFormateado || `PP-${String(pago.numeroPago).padStart(6, '0')}`,
+    concepto: pago.observaciones || 'Pago realizado',
+    estado: 'PAGADO',
+    debe: 0,
+    haber: Number(pago.importe || 0),
+    saldo: 0,
+    detalle: {
+        pagoProveedorId: pago._id,
+        importe: Number(pago.importe || 0),
+        medioPago: pago.medioPago || ''
     }
 });
 
@@ -84,6 +124,7 @@ const traerCuentaCorrienteCliente = async (req, res) => {
 
         const totalDebe = movimientosConSaldo.reduce((acumulado, movimiento) => acumulado + Number(movimiento.debe || 0), 0);
         const totalHaber = movimientosConSaldo.reduce((acumulado, movimiento) => acumulado + Number(movimiento.haber || 0), 0);
+        const saldo = totalDebe - totalHaber;
 
         return res.json({
             cliente: {
@@ -94,7 +135,8 @@ const traerCuentaCorrienteCliente = async (req, res) => {
             resumen: {
                 totalDebe,
                 totalHaber,
-                saldo: totalDebe - totalHaber,
+                saldo,
+                estado: estadoCuentaPorSaldo(saldo),
                 cantidadRemitos: remitos.length,
                 cantidadRecibos: recibos.length
             },
@@ -105,6 +147,84 @@ const traerCuentaCorrienteCliente = async (req, res) => {
     }
 };
 
+const traerCuentaCorrienteProveedor = async (req, res) => {
+    const { proveedorId } = req.params;
+
+    try {
+        const proveedorLimpio = limpiarTexto(proveedorId);
+        if (!proveedorLimpio) {
+            return res.status(400).json({ msg: 'El proveedorId es obligatorio' });
+        }
+
+        if (!mongoose.Types.ObjectId.isValid(proveedorLimpio)) {
+            return res.status(400).json({ msg: 'Proveedor invalido' });
+        }
+
+        const estadosCompraCuenta = ['ENVIADA', 'PARCIALMENTE_RECIBIDA', 'RECIBIDA'];
+        const [ordenes, pagos] = await Promise.all([
+            OrdenCompra.find({
+                proveedor: proveedorLimpio,
+                estado: { $in: estadosCompraCuenta }
+            })
+                .populate('proveedor', 'nombre apellido nombreApellido razonSocial')
+                .sort({ fechaOrden: 1, createdAt: 1 }),
+            PagoProveedor.find({ proveedor: proveedorLimpio })
+                .populate('proveedor', 'nombre apellido nombreApellido razonSocial')
+                .sort({ fechaPago: 1, createdAt: 1 })
+        ]);
+
+        const proveedorBase = ordenes[0]?.proveedor || pagos[0]?.proveedor || null;
+        const nombreApellido = proveedorBase
+            ? (proveedorBase.nombreApellido || `${proveedorBase.nombre || ''} ${proveedorBase.apellido || ''}`.trim())
+            : '';
+
+        const movimientos = [
+            ...ordenes.map(construirMovimientoOrdenCompra),
+            ...pagos.map(construirMovimientoPagoProveedor)
+        ]
+            .sort((a, b) => {
+                const fechaDiff = normalizarFecha(a.fecha) - normalizarFecha(b.fecha);
+                if (fechaDiff !== 0) return fechaDiff;
+                if (a.tipo === b.tipo) return 0;
+                return a.tipo === 'ORDEN_COMPRA' ? -1 : 1;
+            })
+            .map((movimiento) => movimiento);
+
+        let saldoAcumulado = 0;
+        const movimientosConSaldo = movimientos.map((movimiento) => {
+            saldoAcumulado += Number(movimiento.debe || 0) - Number(movimiento.haber || 0);
+            return {
+                ...movimiento,
+                saldo: saldoAcumulado
+            };
+        });
+
+        const totalDebe = movimientosConSaldo.reduce((acumulado, movimiento) => acumulado + Number(movimiento.debe || 0), 0);
+        const totalHaber = movimientosConSaldo.reduce((acumulado, movimiento) => acumulado + Number(movimiento.haber || 0), 0);
+        const saldo = totalDebe - totalHaber;
+
+        return res.json({
+            proveedor: {
+                id: proveedorLimpio,
+                razonSocial: proveedorBase?.razonSocial || '',
+                nombreApellido
+            },
+            resumen: {
+                totalDebe,
+                totalHaber,
+                saldo,
+                estado: estadoCuentaPorSaldo(saldo),
+                cantidadOrdenes: ordenes.length,
+                cantidadPagos: pagos.length
+            },
+            movimientos: movimientosConSaldo
+        });
+    } catch (error) {
+        return res.status(500).json({ msg: 'Error al obtener la cuenta corriente del proveedor', error: error.message });
+    }
+};
+
 module.exports = {
-    traerCuentaCorrienteCliente
+    traerCuentaCorrienteCliente,
+    traerCuentaCorrienteProveedor
 };

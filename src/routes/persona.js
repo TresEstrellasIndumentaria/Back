@@ -6,6 +6,8 @@ const {
     traerPersonaPorDni,
     modificarPersona,
     modificarProveedorCliente,
+    actualizarPermisosEmpleado,
+    resetPasswordEmpleado,
     eliminarPersona,
     modificarMisDatos
 } = require('../controllers/persona');
@@ -41,6 +43,20 @@ router.put(
     verifyToken,
     isAdmin,
     modificarProveedorCliente
+);
+
+router.put(
+    '/:id/permisos',
+    verifyToken,
+    isAdmin,
+    actualizarPermisosEmpleado
+);
+
+router.put(
+    '/:id/reset-password',
+    verifyToken,
+    isAdmin,
+    resetPasswordEmpleado
 );
 
 //eliminar usuario

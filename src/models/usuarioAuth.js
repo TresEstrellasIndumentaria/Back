@@ -21,6 +21,10 @@ const UsuarioAuthSchema = new mongoose.Schema(
             enum: ["ADMIN", "EMPLEADO"],
             required: true,
         },
+        permisos: {
+            type: [String],
+            default: [],
+        },
         activo: { type: Boolean, default: true },
     },
     { timestamps: true }

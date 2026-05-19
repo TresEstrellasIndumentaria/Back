@@ -3,6 +3,41 @@ const UsuarioAuth = require("../models/usuarioAuth");
 const CryptoJS = require('crypto-js');
 const jwt = require('jsonwebtoken');
 
+const escaparRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const normalizarTexto = (value) => String(value || '').trim();
+
+const getProximoNumeroPersona = async (rol, campo) => {
+    const ultimo = await Persona.findOne({
+        rol,
+        [campo]: { $exists: true, $ne: null }
+    }).sort({ [campo]: -1 }).select(campo);
+
+    const ultimoNumero = Number(ultimo?.[campo] || 0);
+    return Number.isFinite(ultimoNumero) ? ultimoNumero + 1 : 1;
+};
+
+const buscarPersonaDuplicada = async ({ nombre, apellido, email, dni }) => {
+    const nombreNormalizado = normalizarTexto(nombre);
+    const apellidoNormalizado = normalizarTexto(apellido);
+    const emailNormalizado = normalizarTexto(email).toLowerCase();
+    const dniNum = Number(dni);
+
+    const condiciones = [];
+
+    if (emailNormalizado) condiciones.push({ email: emailNormalizado });
+    if (Number.isFinite(dniNum)) condiciones.push({ dni: dniNum });
+    if (nombreNormalizado && apellidoNormalizado) {
+        condiciones.push({
+            nombre: { $regex: `^${escaparRegex(nombreNormalizado)}$`, $options: 'i' },
+            apellido: { $regex: `^${escaparRegex(apellidoNormalizado)}$`, $options: 'i' }
+        });
+    }
+
+    if (!condiciones.length) return null;
+    return Persona.findOne({ $or: condiciones });
+};
+
 
 //login clásico
 const login = async (req, res) => {
@@ -53,6 +88,7 @@ const login = async (req, res) => {
                 telefono: persona.telefono,
                 direccion: persona.direccion,
                 roles: user.roles,
+                permisos: user.permisos || persona.permisos || [],
                 token
             }
         });
@@ -78,6 +114,8 @@ const registrar = async (req, res) => {
             telefono,
             direccion,
             nota,
+            numeroCliente,
+            numeroProveedor,
             rol = "CLIENTE" // default
         } = req.body;
 
@@ -88,8 +126,17 @@ const registrar = async (req, res) => {
             });
         }
 
-        const emailLower = email.trim().toLowerCase();
+        const nombreTrim = normalizarTexto(nombre);
+        const apellidoTrim = normalizarTexto(apellido);
+        const emailLower = normalizarTexto(email).toLowerCase();
+        const dniNum = Number(dni);
         const rolUpper = rol.toUpperCase();
+
+        if (!Number.isFinite(dniNum)) {
+            return res.status(400).json({
+                message: "DNI invalido"
+            });
+        }
 
         // Validar rol permitido
         const rolesPermitidos = ["ADMIN", "EMPLEADO", "CLIENTE", "PROVEEDOR"];
@@ -100,27 +147,40 @@ const registrar = async (req, res) => {
         }
 
         // Verificar duplicados
-        const existePersona = await Persona.findOne({
-            $or: [{ dni }, { email: emailLower }]
+        const existePersona = await buscarPersonaDuplicada({
+            nombre: nombreTrim,
+            apellido: apellidoTrim,
+            dni: dniNum,
+            email: emailLower
         });
 
         if (existePersona) {
             return res.status(400).json({
-                message: "Ya existe una persona con ese DNI o email"
+                message: "Ya existe una persona con ese nombre y apellido, DNI o email"
             });
         }
 
+        const numeroClienteFinal = rolUpper === "CLIENTE"
+            ? (numeroCliente || await getProximoNumeroPersona("CLIENTE", "numeroCliente"))
+            : numeroCliente;
+
+        const numeroProveedorFinal = rolUpper === "PROVEEDOR"
+            ? (numeroProveedor || await getProximoNumeroPersona("PROVEEDOR", "numeroProveedor"))
+            : numeroProveedor;
+
         // Crear Persona
         const persona = await Persona.create({
-            nombre,
-            apellido,
-            dni,
+            nombre: nombreTrim,
+            apellido: apellidoTrim,
+            dni: dniNum,
             email: emailLower,
             telefono,
             direccion,
             nota,
+            numeroCliente: numeroClienteFinal,
+            numeroProveedor: numeroProveedorFinal,
             rol: rolUpper,
-            nombreApellido: `${nombre} ${apellido}`
+            nombreApellido: `${nombreTrim} ${apellidoTrim}`
         });
 
         // Crear UsuarioAuth SOLO si es usuario del sistema
@@ -143,7 +203,8 @@ const registrar = async (req, res) => {
                 personaId: persona._id,
                 email: emailLower,
                 password: passwordEncript,
-                rol: rolUpper
+                roles: [rolUpper],
+                permisos: []
             });
         }
 

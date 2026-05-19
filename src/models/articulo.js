@@ -7,6 +7,14 @@ const ArticuloSchema = new Schema(
             required: true
         },
 
+        codigoArticulo: {
+            type: String,
+            trim: true,
+            unique: true,
+            sparse: true,
+            index: true
+        },
+
         categoria: {
             type: Schema.Types.ObjectId,
             ref: 'Categoria'
@@ -14,22 +22,29 @@ const ArticuloSchema = new Schema(
 
         descripcion: String,
 
+        itemProveedor: {
+            type: Boolean,
+            default: false
+        },
+
+        stock: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        ultimoCostoCompra: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
         talles: [
             {
                 talle: {
                     type: String,
-                    required: true,
-                    trim: true
-                },
-                ancho: {
-                    type: String,
-                    required: true,
-                    trim: true
-                },
-                alto: {
-                    type: String,
-                    required: true,
-                    trim: true
+                    trim: true,
+                    default: ''
                 },
                 precio: {
                     type: Number,
@@ -51,6 +66,11 @@ const ArticuloSchema = new Schema(
                             type: Schema.Types.ObjectId,
                             ref: 'Articulo'
                         },
+                        talle: {
+                            type: String,
+                            trim: true,
+                            default: ''
+                        },
                         cantidad: {
                             type: Number,
                             default: 1
@@ -63,13 +83,7 @@ const ArticuloSchema = new Schema(
                 ],
                 stock: {
                     type: Number,
-                    default: 0,
-                    min: 0
-                },
-                entrantes: {
-                    type: Number,
-                    default: 0,
-                    min: 0
+                    default: 0
                 }
             }
         ],

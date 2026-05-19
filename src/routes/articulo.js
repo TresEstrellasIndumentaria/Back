@@ -6,7 +6,8 @@ const {
     modificarArticulo,
     eliminarArticulo,
     modificarStockArticulo,
-    obtenerHistorialInventario
+    obtenerHistorialInventario,
+    obtenerValoracionInventario
 } = require('../controllers/articulo');
 const verifyToken = require('../middlewares/verifyToken');
 const isAdmin = require('../middlewares/isAdmin');
@@ -18,6 +19,9 @@ router.post("/", crearArticulo);
 
 // historial
 router.get('/historial-inventario', verifyToken, isAdmin, obtenerHistorialInventario);
+
+// valoracion historica de inventario
+router.get('/valoracion-inventario', verifyToken, isAdmin, obtenerValoracionInventario);
 
 // trae todos
 router.get('/', traerArticulos);

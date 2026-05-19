@@ -24,11 +24,6 @@ const itemOrdenSchema = new mongoose.Schema(
             required: true
         },
 
-        entrantes: {
-            type: Number,
-            default: 0
-        },
-
         cantidad: {
             type: Number,
             required: true,
@@ -56,21 +51,20 @@ const itemOrdenSchema = new mongoose.Schema(
 
 const ordenCompraSchema = new mongoose.Schema(
     {
+        numero: {
+            type: String,
+            trim: true
+        },
+
         proveedor: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'Persona',
-            required: function () {
-                return this.estado !== 'BORRADOR';
-            }
+            required: true
         },
 
         fechaOrden: {
             type: Date,
             default: Date.now
-        },
-
-        fechaEsperada: {
-            type: Date
         },
 
         anotaciones: {
@@ -80,17 +74,15 @@ const ordenCompraSchema = new mongoose.Schema(
 
         estado: {
             type: String,
-            enum: ['BORRADOR', 'ENVIADA', 'PARCIALMENTE_RECIBIDA', 'RECIBIDA', 'CANCELADA'],
-            default: 'BORRADOR'
+            enum: ['DEUDOR', 'PAGADA'],
+            default: 'DEUDOR'
         },
 
         items: [itemOrdenSchema],
 
         totalOrden: {
             type: Number,
-            required: function () {
-                return this.estado !== 'BORRADOR';
-            },
+            required: true,
             default: 0
         }
     },
@@ -108,12 +100,11 @@ ejem de una ORDEN
   "_id": "65a1f3...",
   "proveedor": "64ff9c...",
   "fechaOrden": "2026-01-10T12:30:00.000Z",
-  "estado": "ENVIADA",
+  "estado": "DEUDOR",
   "items": [
     {
       "articulo": "64ab12...",
       "stockActual": 10,
-      "entrantes": 0,
       "cantidad": 5,
       "costoCompra": 1200,
       "costoTotal": 6000
@@ -121,7 +112,6 @@ ejem de una ORDEN
     {
       "articulo": "64ab34...",
       "stockActual": 3,
-      "entrantes": 0,
       "cantidad": 10,
       "costoCompra": 800,
       "costoTotal": 8000

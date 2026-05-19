@@ -3,6 +3,33 @@ const Usuario = require('../models/persona');
 const UsuarioAuth = require('../models/usuarioAuth');
 const CryptoJS = require('crypto-js');
 
+const escaparRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const normalizarTexto = (value) => String(value || '').trim();
+
+const buscarPersonaDuplicada = async ({ idExcluir, nombre, apellido, email, dni }) => {
+    const nombreNormalizado = normalizarTexto(nombre);
+    const apellidoNormalizado = normalizarTexto(apellido);
+    const emailNormalizado = normalizarTexto(email).toLowerCase();
+    const dniNum = Number(dni);
+    const condiciones = [];
+
+    if (emailNormalizado) condiciones.push({ email: emailNormalizado });
+    if (Number.isFinite(dniNum)) condiciones.push({ dni: dniNum });
+    if (nombreNormalizado && apellidoNormalizado) {
+        condiciones.push({
+            nombre: { $regex: `^${escaparRegex(nombreNormalizado)}$`, $options: 'i' },
+            apellido: { $regex: `^${escaparRegex(apellidoNormalizado)}$`, $options: 'i' }
+        });
+    }
+
+    if (!condiciones.length) return null;
+
+    return Usuario.findOne({
+        _id: { $ne: idExcluir },
+        $or: condiciones
+    });
+};
+
 
 //trae usuarios 
 const traerPersonas = async (req, res) => {
@@ -91,11 +118,38 @@ const traerPersonaPorDni = async (req, res) => {
 const modificarPersona = async (req, res) => {
     try {
         const { id } = req.params;
-        const { password, telefono, direccion, nota, } = req.body;
+        const { nombre, apellido, dni, email, password, telefono, direccion, nota, } = req.body;
 
         const usuario = await Usuario.findById({ _id: id });
         if (!usuario) {
             return res.status(404).json({ message: "Usuario no encontrado" });
+        }
+
+        const nombreFinal = nombre !== undefined ? normalizarTexto(nombre) : usuario.nombre;
+        const apellidoFinal = apellido !== undefined ? normalizarTexto(apellido) : usuario.apellido;
+        const emailFinal = email !== undefined ? normalizarTexto(email).toLowerCase() : usuario.email;
+        const dniFinal = dni !== undefined ? Number(dni) : usuario.dni;
+
+        if (!nombreFinal || !apellidoFinal || !emailFinal) {
+            return res.status(400).json({ message: "Nombre, apellido y email son obligatorios" });
+        }
+
+        if (!Number.isFinite(Number(dniFinal))) {
+            return res.status(400).json({ message: "DNI invalido" });
+        }
+
+        const duplicado = await buscarPersonaDuplicada({
+            idExcluir: usuario._id,
+            nombre: nombreFinal,
+            apellido: apellidoFinal,
+            email: emailFinal,
+            dni: dniFinal
+        });
+
+        if (duplicado) {
+            return res.status(400).json({
+                message: "Ya existe una persona con ese nombre y apellido, DNI o email"
+            });
         }
 
         // Password
@@ -110,11 +164,20 @@ const modificarPersona = async (req, res) => {
         }
 
         // Campos permitidos
+        usuario.nombre = nombreFinal;
+        usuario.apellido = apellidoFinal;
+        usuario.email = emailFinal;
+        usuario.dni = Number(dniFinal);
+        usuario.nombreApellido = `${nombreFinal} ${apellidoFinal}`;
         if (telefono) usuario.telefono = telefono;
         if (direccion) usuario.direccion = direccion;
         if (nota) usuario.nota = nota;
 
         await usuario.save();
+        await UsuarioAuth.findOneAndUpdate(
+            { personaId: usuario._id },
+            { email: emailFinal }
+        );
 
         return res.status(200).json({
             message: "Usuario modificado correctamente",
@@ -140,7 +203,9 @@ const modificarProveedorCliente = async (req, res) => {
             email,
             telefono,
             direccion,
-            nota
+            nota,
+            numeroCliente,
+            numeroProveedor
         } = req.body;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -164,37 +229,43 @@ const modificarProveedorCliente = async (req, res) => {
             });
         }
 
-        if (nombre !== undefined) usuario.nombre = nombre;
-        if (apellido !== undefined) usuario.apellido = apellido;
+        const nombreFinal = nombre !== undefined ? normalizarTexto(nombre) : usuario.nombre;
+        const apellidoFinal = apellido !== undefined ? normalizarTexto(apellido) : usuario.apellido;
+        const emailFinal = email !== undefined ? normalizarTexto(email).toLowerCase() : usuario.email;
+        const dniFinal = dni !== undefined ? Number(dni) : usuario.dni;
+
+        if (!nombreFinal || !apellidoFinal || !emailFinal) {
+            return res.status(400).json({ msg: 'Nombre, apellido y email son obligatorios' });
+        }
+
+        if (!Number.isFinite(Number(dniFinal))) {
+            return res.status(400).json({ msg: 'DNI invalido' });
+        }
+
+        const duplicado = await buscarPersonaDuplicada({
+            idExcluir: usuario._id,
+            nombre: nombreFinal,
+            apellido: apellidoFinal,
+            email: emailFinal,
+            dni: dniFinal
+        });
+
+        if (duplicado) {
+            return res.status(400).json({
+                msg: 'Ya existe una persona con ese nombre y apellido, DNI o email'
+            });
+        }
+
+        usuario.nombre = nombreFinal;
+        usuario.apellido = apellidoFinal;
+        usuario.email = emailFinal;
+        usuario.dni = Number(dniFinal);
+        usuario.nombreApellido = `${nombreFinal} ${apellidoFinal}`;
         if (telefono !== undefined) usuario.telefono = telefono;
         if (direccion !== undefined) usuario.direccion = direccion;
         if (nota !== undefined) usuario.nota = nota;
-
-        if (dni !== undefined) {
-            const dniNum = Number(dni);
-            if (!Number.isFinite(dniNum)) {
-                return res.status(400).json({ msg: 'DNI invalido' });
-            }
-            usuario.dni = dniNum;
-        }
-
-        if (email !== undefined) {
-            const emailNormalizado = String(email).trim().toLowerCase();
-            if (!emailNormalizado) {
-                return res.status(400).json({ msg: 'Email invalido' });
-            }
-
-            const emailExistente = await Usuario.findOne({
-                email: emailNormalizado,
-                _id: { $ne: usuario._id }
-            });
-
-            if (emailExistente) {
-                return res.status(400).json({ msg: 'El email ya esta en uso' });
-            }
-
-            usuario.email = emailNormalizado;
-        }
+        if (numeroCliente !== undefined) usuario.numeroCliente = numeroCliente;
+        if (numeroProveedor !== undefined) usuario.numeroProveedor = numeroProveedor;
 
         await usuario.save();
 
@@ -206,6 +277,124 @@ const modificarProveedorCliente = async (req, res) => {
         console.error('Error al modificar proveedor/cliente:', error);
         return res.status(500).json({
             msg: 'Error interno del servidor',
+            error: error.message
+        });
+    }
+};
+
+const PERMISOS_VALIDOS = [
+    'CLIENTES',
+    'PROVEEDORES',
+    'COMPRAS',
+    'ARTICULOS',
+    'INVENTARIO_AJUSTE',
+    'INVENTARIO_HISTORIAL',
+    'INVENTARIO_VALORACION',
+    'VENTAS',
+    'COBROS',
+    'INFORMES',
+];
+
+const actualizarPermisosEmpleado = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const permisos = Array.isArray(req.body?.permisos) ? req.body.permisos : [];
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: 'El ID proporcionado no es valido.' });
+        }
+
+        const permisosNormalizados = [...new Set(permisos.map((permiso) => String(permiso || '').trim().toUpperCase()))];
+        const permisosInvalidos = permisosNormalizados.filter((permiso) => !PERMISOS_VALIDOS.includes(permiso));
+
+        if (permisosInvalidos.length) {
+            return res.status(400).json({
+                message: `Permisos invalidos: ${permisosInvalidos.join(', ')}`
+            });
+        }
+
+        const empleado = await Usuario.findById(id);
+        if (!empleado) {
+            return res.status(404).json({ message: 'Empleado no encontrado' });
+        }
+
+        if (empleado.rol !== 'EMPLEADO') {
+            return res.status(400).json({ message: 'Los permisos solo se pueden asignar a empleados' });
+        }
+
+        empleado.permisos = permisosNormalizados;
+        await empleado.save();
+
+        await UsuarioAuth.findOneAndUpdate(
+            { personaId: empleado._id },
+            { permisos: permisosNormalizados },
+            { new: true }
+        );
+
+        return res.status(200).json({
+            message: 'Permisos actualizados correctamente',
+            empleado
+        });
+    } catch (error) {
+        console.error('Error al actualizar permisos:', error);
+        return res.status(500).json({
+            message: 'Error interno del servidor',
+            error: error.message
+        });
+    }
+};
+
+const resetPasswordEmpleado = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { password } = req.body;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: 'El ID proporcionado no es valido.' });
+        }
+
+        if (!password || String(password).length < 6) {
+            return res.status(400).json({ message: 'La contrasena temporal debe tener al menos 6 caracteres.' });
+        }
+
+        const empleado = await Usuario.findById(id);
+        if (!empleado) {
+            return res.status(404).json({ message: 'Empleado no encontrado' });
+        }
+
+        if (!['ADMIN', 'EMPLEADO'].includes(empleado.rol)) {
+            return res.status(400).json({ message: 'Solo se puede resetear password de usuarios del sistema.' });
+        }
+
+        if (!process.env.PASS_SEC) {
+            return res.status(500).json({ message: 'Error de configuracion' });
+        }
+
+        const passwordEncriptada = CryptoJS.AES.encrypt(
+            String(password),
+            process.env.PASS_SEC
+        ).toString();
+
+        empleado.password = passwordEncriptada;
+        await empleado.save();
+
+        const auth = await UsuarioAuth.findOneAndUpdate(
+            { personaId: empleado._id },
+            { password: passwordEncriptada, email: empleado.email },
+            { new: true }
+        );
+
+        if (!auth) {
+            return res.status(404).json({ message: 'Usuario de acceso no encontrado para esa persona.' });
+        }
+
+        return res.status(200).json({
+            message: 'Contrasena reseteada correctamente'
+        });
+    } catch (error) {
+        console.error('Error al resetear password:', error);
+        return res.status(500).json({
+            message: 'Error interno del servidor',
             error: error.message
         });
     }
@@ -293,6 +482,8 @@ module.exports = {
     traerPersonaPorDni,
     modificarPersona,
     modificarProveedorCliente,
+    actualizarPermisosEmpleado,
+    resetPasswordEmpleado,
     eliminarPersona,
     modificarMisDatos
 }

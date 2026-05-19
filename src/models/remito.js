@@ -2,6 +2,15 @@ const mongoose = require('mongoose');
 
 const pedidoItemSchema = new mongoose.Schema(
     {
+        articulo: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Articulo'
+        },
+        codigoArticulo: {
+            type: String,
+            trim: true,
+            default: ''
+        },
         nombreCamiseta: {
             type: String,
             trim: true,
@@ -19,8 +28,8 @@ const pedidoItemSchema = new mongoose.Schema(
         },
         talle: {
             type: String,
-            required: true,
-            trim: true
+            trim: true,
+            default: ''
         },
         cantidad: {
             type: Number,
@@ -87,7 +96,7 @@ const remitoSchema = new mongoose.Schema(
         },
         estado: {
             type: String,
-            enum: ['PENDIENTE', 'DEUDOR', 'PAGADO', 'CANCELADO'],
+            enum: ['PENDIENTE', 'PAGADO'],
             default: 'PENDIENTE'
         },
         subtotal: {

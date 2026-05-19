@@ -7,11 +7,7 @@ const MovimientoInventarioSchema = new Schema(
         colaborador: { type: Schema.Types.ObjectId, ref: 'UsuarioAuth', required: false },
         tienda: { type: String, default: 'Liz' },
         talle: { type: String, default: '' },
-        motivo: {
-            type: String,
-            enum: ['RECIBIR_ARTICULOS', 'RECUENTO_INVENTARIO', 'PERDIDA', 'DANADO', 'OTRO'],
-            default: 'OTRO'
-        },
+        motivo: { type: String, default: '' },
         anotaciones: { type: String, default: '' },
         ajuste: { type: Number, required: true },      // delta (+/-)
         stockFinal: { type: Number, required: true },  // stock resultante
