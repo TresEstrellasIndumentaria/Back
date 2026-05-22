@@ -10,7 +10,8 @@ const buscarPersonaDuplicada = async ({ idExcluir, nombre, apellido, email, dni 
     const nombreNormalizado = normalizarTexto(nombre);
     const apellidoNormalizado = normalizarTexto(apellido);
     const emailNormalizado = normalizarTexto(email).toLowerCase();
-    const dniNum = Number(dni);
+    const dniTexto = normalizarTexto(dni);
+    const dniNum = dniTexto ? Number(dniTexto) : null;
     const condiciones = [];
 
     if (emailNormalizado) condiciones.push({ email: emailNormalizado });
@@ -232,13 +233,14 @@ const modificarProveedorCliente = async (req, res) => {
         const nombreFinal = nombre !== undefined ? normalizarTexto(nombre) : usuario.nombre;
         const apellidoFinal = apellido !== undefined ? normalizarTexto(apellido) : usuario.apellido;
         const emailFinal = email !== undefined ? normalizarTexto(email).toLowerCase() : usuario.email;
-        const dniFinal = dni !== undefined ? Number(dni) : usuario.dni;
+        const dniTexto = dni !== undefined ? normalizarTexto(dni) : normalizarTexto(usuario.dni);
+        const dniFinal = dniTexto ? Number(dniTexto) : undefined;
 
-        if (!nombreFinal || !apellidoFinal || !emailFinal) {
-            return res.status(400).json({ msg: 'Nombre, apellido y email son obligatorios' });
+        if (!nombreFinal || !apellidoFinal) {
+            return res.status(400).json({ msg: 'Nombre y apellido son obligatorios' });
         }
 
-        if (!Number.isFinite(Number(dniFinal))) {
+        if (dniTexto && !Number.isFinite(Number(dniFinal))) {
             return res.status(400).json({ msg: 'DNI invalido' });
         }
 
@@ -246,8 +248,8 @@ const modificarProveedorCliente = async (req, res) => {
             idExcluir: usuario._id,
             nombre: nombreFinal,
             apellido: apellidoFinal,
-            email: emailFinal,
-            dni: dniFinal
+            email: emailFinal || undefined,
+            dni: dniTexto ? dniFinal : undefined
         });
 
         if (duplicado) {
@@ -258,8 +260,8 @@ const modificarProveedorCliente = async (req, res) => {
 
         usuario.nombre = nombreFinal;
         usuario.apellido = apellidoFinal;
-        usuario.email = emailFinal;
-        usuario.dni = Number(dniFinal);
+        usuario.email = emailFinal || undefined;
+        usuario.dni = dniTexto ? Number(dniFinal) : undefined;
         usuario.nombreApellido = `${nombreFinal} ${apellidoFinal}`;
         if (telefono !== undefined) usuario.telefono = telefono;
         if (direccion !== undefined) usuario.direccion = direccion;

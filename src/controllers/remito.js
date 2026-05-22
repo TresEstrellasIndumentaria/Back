@@ -189,6 +189,10 @@ const aplicarAjusteEnTalle = async ({
     tienda
 }) => {
     const stockFinal = Number(articulo.talles[indiceTalle].stock || 0) + cantidad;
+    if (stockFinal < 0) {
+        throw new Error(`Stock insuficiente para el articulo ${articulo.nombre}`);
+    }
+
     articulo.talles[indiceTalle].stock = stockFinal;
     await articulo.save();
 
@@ -198,6 +202,44 @@ const aplicarAjusteEnTalle = async ({
         ajuste: cantidad,
         stockFinal,
         coste: articulo.talles[indiceTalle].coste,
+        motivo,
+        remito,
+        colaborador,
+        tienda
+    });
+};
+
+const aplicarAjusteEnStockRaiz = async ({
+    articulo,
+    cantidad,
+    motivo,
+    remito,
+    colaborador,
+    tienda
+}) => {
+    const stockFinal = Number(articulo.stock || 0) + cantidad;
+    if (stockFinal < 0) {
+        throw new Error(`Stock insuficiente para el articulo ${articulo.nombre}`);
+    }
+
+    articulo.stock = stockFinal;
+
+    if (Array.isArray(articulo.talles) && articulo.talles.length === 1) {
+        articulo.talles[0].stock = stockFinal;
+    }
+
+    await articulo.save();
+
+    await registrarMovimientoInventario({
+        articulo,
+        talle: Array.isArray(articulo.talles) && articulo.talles.length === 1
+            ? articulo.talles[0].talle
+            : '',
+        ajuste: cantidad,
+        stockFinal,
+        coste: Array.isArray(articulo.talles) && articulo.talles.length === 1
+            ? articulo.talles[0].coste
+            : 0,
         motivo,
         remito,
         colaborador,
@@ -215,10 +257,20 @@ const prepararAjustesStockPedido = async (pedido = [], { factor = -1 } = {}) => 
             throw new Error(`No se encontro el articulo del item ${item.prenda}`);
         }
 
-        const indiceTalleVenta = resolverIndiceTalleParaAjuste(articulo, item.talle);
-
-        const talleVenta = articulo.talles[indiceTalleVenta];
         const cantidadItem = Number(item.cantidad || 0) * factor;
+        const tieneTalles = Array.isArray(articulo.talles) && articulo.talles.length;
+
+        if (articulo.itemProveedor || !tieneTalles) {
+            ajustes.push({
+                articulo,
+                tipo: 'stockRaiz',
+                cantidad: cantidadItem
+            });
+            continue;
+        }
+
+        const indiceTalleVenta = resolverIndiceTalleParaAjuste(articulo, item.talle);
+        const talleVenta = articulo.talles[indiceTalleVenta];
 
         if (talleVenta.artCompuesto) {
             for (const componente of talleVenta.composicion || []) {
@@ -230,6 +282,7 @@ const prepararAjustesStockPedido = async (pedido = [], { factor = -1 } = {}) => 
                 ajustes.push({
                     articulo: articuloComponente,
                     indiceTalle: resolverIndiceTalleParaAjuste(articuloComponente, componente.talle),
+                    tipo: 'talle',
                     cantidad: cantidadItem * Number(componente.cantidad || 0)
                 });
             }
@@ -237,12 +290,45 @@ const prepararAjustesStockPedido = async (pedido = [], { factor = -1 } = {}) => 
             ajustes.push({
                 articulo,
                 indiceTalle: indiceTalleVenta,
+                tipo: 'talle',
                 cantidad: cantidadItem
             });
         }
     }
 
     return ajustes;
+};
+
+const getStockActualAjuste = (ajuste) => {
+    if (ajuste.tipo === 'stockRaiz') {
+        return Number(ajuste.articulo.stock || 0);
+    }
+
+    return Number(ajuste.articulo.talles?.[ajuste.indiceTalle]?.stock || 0);
+};
+
+const getClaveAjusteStock = (ajuste) => (
+    ajuste.tipo === 'stockRaiz'
+        ? `${ajuste.articulo._id}::stockRaiz`
+        : `${ajuste.articulo._id}::talle::${ajuste.indiceTalle}`
+);
+
+const validarStockSuficiente = (ajustes = []) => {
+    const stockProyectado = new Map();
+
+    for (const ajuste of ajustes) {
+        const clave = getClaveAjusteStock(ajuste);
+        const stockActual = stockProyectado.has(clave)
+            ? stockProyectado.get(clave)
+            : getStockActualAjuste(ajuste);
+        const stockFinal = stockActual + Number(ajuste.cantidad || 0);
+
+        if (stockFinal < 0) {
+            throw new Error(`Stock insuficiente para el articulo ${ajuste.articulo.nombre}`);
+        }
+
+        stockProyectado.set(clave, stockFinal);
+    }
 };
 
 const aplicarAjustesStock = async (ajustes = [], {
@@ -252,7 +338,11 @@ const aplicarAjustesStock = async (ajustes = [], {
     tienda = ''
 } = {}) => {
     for (const ajuste of ajustes) {
-        await aplicarAjusteEnTalle({
+        const aplicarAjuste = ajuste.tipo === 'stockRaiz'
+            ? aplicarAjusteEnStockRaiz
+            : aplicarAjusteEnTalle;
+
+        await aplicarAjuste({
             ...ajuste,
             motivo,
             remito,
@@ -402,6 +492,7 @@ const crearRemito = async (req, res) => {
     try {
         const payload = construirPayloadRemito(req.body);
         const ajustesStock = await prepararAjustesStockPedido(payload.pedido, { factor: -1 });
+        validarStockSuficiente(ajustesStock);
         const numeroRemito = await obtenerSiguienteNumeroRemito();
         const nuevoRemito = new Remito({
             ...payload,
@@ -632,6 +723,7 @@ const modificarRemito = async (req, res) => {
         const ajustesNuevos = debeAjustarPedido
             ? await prepararAjustesStockPedido(payload.pedido, { factor: -1 })
             : [];
+        validarStockSuficiente([...ajustesRestaurar, ...ajustesNuevos]);
 
         Object.assign(remito, payload);
 

@@ -21,7 +21,8 @@ const buscarPersonaDuplicada = async ({ nombre, apellido, email, dni }) => {
     const nombreNormalizado = normalizarTexto(nombre);
     const apellidoNormalizado = normalizarTexto(apellido);
     const emailNormalizado = normalizarTexto(email).toLowerCase();
-    const dniNum = Number(dni);
+    const dniTexto = normalizarTexto(dni);
+    const dniNum = dniTexto ? Number(dniTexto) : null;
 
     const condiciones = [];
 
@@ -120,19 +121,21 @@ const registrar = async (req, res) => {
         } = req.body;
 
         // Validaciones básicas
-        if (!nombre || !apellido || !dni || !email) {
-            return res.status(400).json({
-                message: "Faltan campos obligatorios"
-            });
-        }
-
         const nombreTrim = normalizarTexto(nombre);
         const apellidoTrim = normalizarTexto(apellido);
         const emailLower = normalizarTexto(email).toLowerCase();
-        const dniNum = Number(dni);
+        const dniTexto = normalizarTexto(dni);
+        const dniNum = dniTexto ? Number(dniTexto) : null;
         const rolUpper = rol.toUpperCase();
+        const esClienteOProveedor = rolUpper === "CLIENTE" || rolUpper === "PROVEEDOR";
 
-        if (!Number.isFinite(dniNum)) {
+        if (!nombreTrim || !apellidoTrim || (!esClienteOProveedor && (!dniTexto || !emailLower))) {
+            return res.status(400).json({
+                message: esClienteOProveedor ? "Nombre y apellido son obligatorios" : "Faltan campos obligatorios"
+            });
+        }
+
+        if (dniTexto && !Number.isFinite(dniNum)) {
             return res.status(400).json({
                 message: "DNI invalido"
             });
@@ -150,8 +153,8 @@ const registrar = async (req, res) => {
         const existePersona = await buscarPersonaDuplicada({
             nombre: nombreTrim,
             apellido: apellidoTrim,
-            dni: dniNum,
-            email: emailLower
+            dni: dniTexto ? dniNum : undefined,
+            email: emailLower || undefined
         });
 
         if (existePersona) {
@@ -172,8 +175,8 @@ const registrar = async (req, res) => {
         const persona = await Persona.create({
             nombre: nombreTrim,
             apellido: apellidoTrim,
-            dni: dniNum,
-            email: emailLower,
+            dni: dniTexto ? dniNum : undefined,
+            email: emailLower || undefined,
             telefono,
             direccion,
             nota,

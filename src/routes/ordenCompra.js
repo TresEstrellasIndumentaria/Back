@@ -9,7 +9,8 @@ const {
     enviarOrdenCompra,
     recibirOrdenCompra,
     actualizarEstadoOrdenCompra,
-    cancelarOrdenCompra
+    cancelarOrdenCompra,
+    eliminarOrdenCompra
 } = require('../controllers/ordenDeCompra');
 const verifyToken = require("../middlewares/verifyToken");
 const isAdmin = require("../middlewares/isAdmin");
@@ -43,6 +44,10 @@ router.patch('/:id/estado', actualizarEstadoOrdenCompra);
 
 // Cancelar orden (BORRADOR / ENVIADA → CANCELADA)
 router.put('/:id/cancelar', cancelarOrdenCompra);
+
+// Eliminar orden
+router.delete('/eliminar/:id', eliminarOrdenCompra);
+router.delete('/:id', eliminarOrdenCompra);
 
 module.exports = router;
 

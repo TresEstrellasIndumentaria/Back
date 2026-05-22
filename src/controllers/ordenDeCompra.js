@@ -353,6 +353,7 @@ const obtenerOrdenesCompra = async (req, res) => {
             OrdenCompra.countDocuments(filtros),
             OrdenCompra.find(filtros)
                 .populate('proveedor', 'nombre apellido razonSocial numeroCliente numeroProveedor')
+                .populate('items.articulo', 'nombre codigoArticulo')
                 .sort({ createdAt: -1 })
                 .skip(skip)
                 .limit(Number(limit))
@@ -395,6 +396,7 @@ const obtenerOrdenesPorProveedor = async (req, res) => {
 
         const ordenes = await OrdenCompra.find({ proveedor: proveedorId })
             .populate('proveedor', 'nombre apellido razonSocial numeroCliente numeroProveedor')
+            .populate('items.articulo', 'nombre codigoArticulo')
             .sort({ createdAt: -1 });
 
         res.json(ordenes);
@@ -514,6 +516,40 @@ const cancelarOrdenCompra = async (req, res) => {
     }
 };
 
+const eliminarOrdenCompra = async (req, res) => {
+    const session = await OrdenCompra.startSession();
+    session.startTransaction();
+
+    try {
+        const { id } = req.params;
+        const orden = await OrdenCompra.findById(id).session(session);
+
+        if (!orden) throw crearHttpError('Orden no encontrada', 404);
+
+        for (const item of orden.items || []) {
+            const cantidadRecibida = Number(item.cantidadRecibida || 0);
+            if (cantidadRecibida > 0) {
+                await ajustarArticuloPorItem(item, session, {
+                    stockDelta: -cantidadRecibida
+                });
+            }
+        }
+
+        await OrdenCompra.findByIdAndDelete(id).session(session);
+        await session.commitTransaction();
+
+        res.json({
+            msg: 'Orden de compra eliminada correctamente',
+            idEliminado: id
+        });
+    } catch (error) {
+        await session.abortTransaction();
+        res.status(error.status || 500).json({ msg: error.message });
+    } finally {
+        session.endSession();
+    }
+};
+
 module.exports = {
     crearOrdenCompra,
     obtenerOrdenesCompra,
@@ -522,5 +558,6 @@ module.exports = {
     enviarOrdenCompra,
     recibirOrdenCompra,
     actualizarEstadoOrdenCompra,
-    cancelarOrdenCompra
+    cancelarOrdenCompra,
+    eliminarOrdenCompra
 };
