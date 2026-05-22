@@ -21,5 +21,6 @@ router.put('/modifica/:id', modificarRemito);
 router.patch('/:id/estado', actualizarEstadoRemito);
 router.put('/:id/estado', actualizarEstadoRemito);
 router.delete('/eliminar/:id', eliminarRemito);
+router.delete('/:id', eliminarRemito);
 
 module.exports = router;

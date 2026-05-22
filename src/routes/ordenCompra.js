@@ -3,6 +3,7 @@ const router = express.Router();
 
 const {
     crearOrdenCompra,
+    modificarOrdenCompra,
     obtenerOrdenesCompra,
     obtenerOrdenCompraPorId,
     obtenerOrdenesPorProveedor,
@@ -22,6 +23,8 @@ router.use(isAdmin);
 
 // Crear orden (BORRADOR)
 router.post('/', crearOrdenCompra);
+router.put('/:id', modificarOrdenCompra);
+router.patch('/:id', modificarOrdenCompra);
 
 // Listado paginado + filtros
 // /api/ordenes-compra?page=1&limit=10&estado=ENVIADA&desde=2026-01-01&hasta=2026-01-31

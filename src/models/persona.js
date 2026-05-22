@@ -22,10 +22,12 @@ const PersonaSchema = new Schema(
             type: String,
         },
         numeroCliente: {
-            type: Number
+            type: String,
+            trim: true
         },
         numeroProveedor: {
-            type: Number
+            type: String,
+            trim: true
         },
         razonSocial: {
             type: String,

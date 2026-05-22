@@ -36,6 +36,20 @@ const parsearCoste = (coste, mensaje = 'Coste invalido. Debe ser un numero mayor
 
 const claveTalle = (talle) => String(talle || '').trim().toUpperCase();
 const normalizarCodigoArticulo = (codigo) => String(codigo || '').trim().toUpperCase();
+const formatearCodigo = (value) => String(Number(value || 0)).padStart(4, '0');
+
+const getProximoCodigoArticulo = async () => {
+    const articulos = await Articulo.find({
+        codigoArticulo: { $exists: true, $nin: [null, ''] }
+    }).select('codigoArticulo').lean();
+
+    const ultimoNumero = articulos.reduce((max, articulo) => {
+        const numero = Number(String(articulo?.codigoArticulo || '').replace(/\D/g, ''));
+        return Number.isFinite(numero) && numero > max ? numero : max;
+    }, 0);
+
+    return formatearCodigo(ultimoNumero + 1);
+};
 
 const totalStockArticulo = (articulo) => {
     const stockRaiz = Number(articulo?.stock || 0);
@@ -241,12 +255,21 @@ const descontarStockComponentes = async (talles = []) => {
             throw new Error('Articulo de composicion no encontrado');
         }
 
-        if (!Array.isArray(componente.talles) || !componente.talles.length) {
-            throw new Error(`El articulo ${componente.nombre} no tiene talles configurados`);
-        }
+        const tieneTalles = Array.isArray(componente.talles) && componente.talles.length;
 
         for (const [talleKey, cantidadADescontar] of descuentosPorTalle.entries()) {
             let indiceTalle = -1;
+
+            if (!tieneTalles) {
+                const stockActual = Number(componente.stock || 0);
+                const stockFinal = stockActual - cantidadADescontar;
+                if (stockFinal < 0) {
+                    throw new Error(`Stock insuficiente para el componente ${componente.nombre}`);
+                }
+
+                componente.stock = stockFinal;
+                continue;
+            }
 
             if (talleKey) {
                 indiceTalle = buscarIndiceTalle(componente, talleKey);
@@ -259,13 +282,18 @@ const descontarStockComponentes = async (talles = []) => {
                 throw new Error(`Debe indicar talle para el componente ${componente.nombre}`);
             }
 
-            const stockActual = Number(componente.talles[indiceTalle].stock || 0);
+            const stockActualTalle = Number(componente.talles[indiceTalle].stock || 0);
+            const stockActualRaiz = componente.talles.length === 1 ? Number(componente.stock || 0) : 0;
+            const stockActual = Math.max(stockActualTalle, stockActualRaiz);
             const stockFinal = stockActual - cantidadADescontar;
             if (stockFinal < 0) {
                 throw new Error(`Stock insuficiente para el componente ${componente.nombre}`);
             }
 
             componente.talles[indiceTalle].stock = stockFinal;
+            if (componente.talles.length === 1) {
+                componente.stock = stockFinal;
+            }
         }
 
         componentesAActualizar.push(componente);
@@ -330,12 +358,21 @@ const traerArticulo = async (req, res) => {
     }
 };
 
+const obtenerSiguienteCodigoArticulo = async (req, res) => {
+    try {
+        const codigo = await getProximoCodigoArticulo();
+        return res.json({ codigo, siguiente: codigo });
+    } catch (error) {
+        return res.status(500).json({ msg: 'Error al obtener siguiente codigo de articulo', error: error.message });
+    }
+};
+
 // ================================
 // CREAR ARTICULO
 // ================================
 const crearArticulo = async (req, res) => {
     const { nombre, categoria, descripcion, talles, itemProveedor } = req.body;
-    const codigoArticulo = normalizarCodigoArticulo(req.body.codigoArticulo ?? req.body.codigo);
+    let codigoArticulo = normalizarCodigoArticulo(req.body.codigoArticulo ?? req.body.codigo);
 
     try {
         const ultimoCostoCompra = req.body.ultimoCostoCompra !== undefined
@@ -347,7 +384,7 @@ const crearArticulo = async (req, res) => {
         }
 
         if (!codigoArticulo) {
-            return res.status(400).json({ msg: 'El codigoArticulo es obligatorio' });
+            codigoArticulo = await getProximoCodigoArticulo();
         }
 
         const esItemProveedor = Boolean(itemProveedor);
@@ -583,7 +620,7 @@ const eliminarArticulo = async (req, res) => {
 // =================================
 const modificarStockArticulo = async (req, res) => {
     const { id } = req.params;
-    const { stock, talle, anotaciones, coste, tienda, colaborador } = req.body;
+    const { stock, talle, anotaciones, coste, tienda, colaborador, motivo } = req.body;
 
     try {
         if (stock === undefined) {
@@ -662,6 +699,7 @@ const modificarStockArticulo = async (req, res) => {
                 tienda: tienda || '',
                 talle: talleMovimiento,
                 anotaciones: anotaciones || '',
+                motivo: motivo || 'AJUSTE',
                 ajuste,
                 stockFinal,
                 coste: costeMovimiento
@@ -727,12 +765,136 @@ const obtenerHistorialInventario = async (req, res) => {
             motivo: m.motivo || '',
             ajuste: m.ajuste,
             stockFinal: m.stockFinal,
-            anotaciones: m.anotaciones || ''
+            anotaciones: m.anotaciones || '',
+            anulado: Boolean(m.anulado),
+            fechaAnulacion: m.fechaAnulacion,
+            motivoAnulacion: m.motivoAnulacion || '',
+            movimientoAnulacion: m.movimientoAnulacion,
+            movimientoAnulado: m.movimientoAnulado
         }));
 
         return res.status(200).json({ movimientos: data });
     } catch (error) {
         return res.status(500).json({ msg: 'Error al obtener historial de inventario', error: error.message });
+    }
+};
+
+const anularMovimientoInventario = async (req, res) => {
+    const session = await MovimientoInventario.startSession();
+    session.startTransaction();
+
+    try {
+        const { id } = req.params;
+        const motivoAnulacion = String(req.body?.motivoAnulacion || req.body?.motivo || 'Anulacion manual').trim();
+
+        const movimiento = await MovimientoInventario.findById(id).session(session);
+        if (!movimiento) {
+            const error = new Error('Movimiento no encontrado');
+            error.status = 404;
+            throw error;
+        }
+
+        if (movimiento.anulado) {
+            const error = new Error('El movimiento ya esta anulado');
+            error.status = 400;
+            throw error;
+        }
+
+        if (movimiento.motivo === 'ANULACION_MOVIMIENTO') {
+            const error = new Error('No se puede anular un movimiento de anulacion');
+            error.status = 400;
+            throw error;
+        }
+
+        const articulo = await Articulo.findById(movimiento.articulo).session(session);
+        if (!articulo) {
+            movimiento.anulado = true;
+            movimiento.fechaAnulacion = new Date();
+            movimiento.motivoAnulacion = `${motivoAnulacion} (sin reversa de stock: articulo no encontrado)`;
+            movimiento.anuladoPor = req.user?.id || undefined;
+            await movimiento.save({ session });
+            await session.commitTransaction();
+
+            return res.json({
+                msg: 'Movimiento anulado sin reversa de stock porque el articulo asociado ya no existe',
+                movimiento
+            });
+        }
+
+        const ajusteReversa = Number(movimiento.ajuste || 0) * -1;
+        const talleMovimiento = String(movimiento.talle || '').trim();
+        const tieneTalles = Array.isArray(articulo.talles) && articulo.talles.length;
+        let stockFinal = 0;
+
+        if (talleMovimiento) {
+            const indiceTalle = articulo.talles.findIndex(
+                (item) => claveTalle(item.talle) === claveTalle(talleMovimiento)
+            );
+
+            if (indiceTalle === -1) {
+                throw new Error('Talle del movimiento no encontrado en el articulo');
+            }
+
+            const stockActual = Number(articulo.talles[indiceTalle].stock || 0);
+            stockFinal = stockActual + ajusteReversa;
+            if (stockFinal < 0) {
+                throw new Error('La anulacion dejaria stock negativo');
+            }
+
+            articulo.talles[indiceTalle].stock = stockFinal;
+            if (articulo.talles.length === 1) {
+                articulo.stock = stockFinal;
+            }
+        } else if (articulo.itemProveedor || !tieneTalles || articulo.talles.length === 1) {
+            const stockActual = Number(articulo.stock || articulo.talles?.[0]?.stock || 0);
+            stockFinal = stockActual + ajusteReversa;
+            if (stockFinal < 0) {
+                throw new Error('La anulacion dejaria stock negativo');
+            }
+
+            articulo.stock = stockFinal;
+            if (tieneTalles && articulo.talles.length === 1) {
+                articulo.talles[0].stock = stockFinal;
+            }
+        } else {
+            throw new Error('El movimiento no tiene talle y el articulo maneja stock por talle');
+        }
+
+        await articulo.save({ session });
+
+        const movimientoAnulacion = await MovimientoInventario.create([{
+            articulo: articulo._id,
+            colaborador: req.user?.id || undefined,
+            tienda: movimiento.tienda || '',
+            talle: movimiento.talle || '',
+            motivo: 'ANULACION_MOVIMIENTO',
+            anotaciones: motivoAnulacion,
+            ajuste: ajusteReversa,
+            stockFinal,
+            coste: movimiento.coste || 0,
+            movimientoAnulado: movimiento._id
+        }], { session });
+
+        movimiento.anulado = true;
+        movimiento.fechaAnulacion = new Date();
+        movimiento.motivoAnulacion = motivoAnulacion;
+        movimiento.anuladoPor = req.user?.id || undefined;
+        movimiento.movimientoAnulacion = movimientoAnulacion[0]._id;
+        await movimiento.save({ session });
+
+        await session.commitTransaction();
+
+        return res.json({
+            msg: 'Movimiento anulado correctamente',
+            movimiento,
+            movimientoAnulacion: movimientoAnulacion[0],
+            articulo
+        });
+    } catch (error) {
+        await session.abortTransaction();
+        return res.status(error.status || 500).json({ msg: error.message || 'Error al anular movimiento de inventario' });
+    } finally {
+        session.endSession();
     }
 };
 
@@ -757,7 +919,7 @@ const obtenerValoracionInventario = async (req, res) => {
         }
 
         const articulos = await Articulo.find().populate('categoria', 'nombre').lean();
-        const movimientos = await MovimientoInventario.find({ fecha: { $lte: fechaCorte } })
+        const movimientos = await MovimientoInventario.find({ fecha: { $lte: fechaCorte }, anulado: { $ne: true } })
             .sort({ fecha: 1, createdAt: 1 })
             .lean();
 
@@ -866,10 +1028,12 @@ const obtenerValoracionInventario = async (req, res) => {
 module.exports = {
     traerArticulos,
     traerArticulo,
+    obtenerSiguienteCodigoArticulo,
     crearArticulo,
     modificarArticulo,
     eliminarArticulo,
     modificarStockArticulo,
     obtenerHistorialInventario,
+    anularMovimientoInventario,
     obtenerValoracionInventario
 };

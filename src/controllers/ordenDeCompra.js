@@ -11,6 +11,23 @@ const crearHttpError = (msg, status = 400) => {
 
 const ESTADOS_PARA_RECIBIR = ['DEUDOR'];
 const normalizarTalle = (talle) => String(talle || '').trim().toUpperCase();
+const parsearFechaOrden = (fechaOrden) => {
+    if (!fechaOrden) return undefined;
+
+    if (typeof fechaOrden === 'string') {
+        const fechaLimpia = fechaOrden.trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(fechaLimpia)) {
+            return new Date(`${fechaLimpia}T12:00:00.000Z`);
+        }
+    }
+
+    const fecha = new Date(fechaOrden);
+    if (Number.isNaN(fecha.getTime())) {
+        throw crearHttpError('Fecha de orden invalida');
+    }
+
+    return fecha;
+};
 const articuloUsaTalles = (articulo) => (
     Array.isArray(articulo?.talles)
     && articulo.talles.some((item) => normalizarTalle(item?.talle))
@@ -256,6 +273,52 @@ const procesarItemsOrden = async (items = [], session = null) => {
     return { itemsProcesados, totalOrden };
 };
 
+const construirPayloadOrden = async (data = {}, session = null) => {
+    const {
+        numero,
+        proveedor,
+        fechaOrden,
+        anotaciones,
+        items = [],
+        estado,
+        guardarComoBorrador
+    } = data;
+
+    if (!Array.isArray(items)) {
+        throw crearHttpError('items debe ser un arreglo');
+    }
+
+    let estadoFinal = 'DEUDOR';
+    if (typeof guardarComoBorrador === 'boolean') {
+        estadoFinal = 'DEUDOR';
+    } else if (estado) {
+        estadoFinal = String(estado).toUpperCase();
+    }
+
+    if (!['DEUDOR', 'PAGADA'].includes(estadoFinal)) {
+        throw crearHttpError('Estado invalido. Use DEUDOR o PAGADA');
+    }
+
+    if (!proveedor) {
+        throw crearHttpError('Debe informar proveedor');
+    }
+    if (!items.length) {
+        throw crearHttpError('Debe informar al menos un item');
+    }
+
+    const { itemsProcesados, totalOrden } = await procesarItemsOrden(items, session);
+
+    return {
+        numero,
+        proveedor,
+        fechaOrden: parsearFechaOrden(fechaOrden),
+        anotaciones,
+        estadoFinal,
+        itemsProcesados,
+        totalOrden
+    };
+};
+
 // Crear orden
 const crearOrdenCompra = async (req, res) => {
     const session = await OrdenCompra.startSession();
@@ -267,39 +330,15 @@ const crearOrdenCompra = async (req, res) => {
             proveedor,
             fechaOrden,
             anotaciones,
-            items = [],
-            estado,
-            guardarComoBorrador
-        } = req.body;
-
-        if (!Array.isArray(items)) {
-            throw crearHttpError('items debe ser un arreglo');
-        }
-
-        let estadoFinal = 'DEUDOR';
-        if (typeof guardarComoBorrador === 'boolean') {
-            estadoFinal = 'DEUDOR';
-        } else if (estado) {
-            estadoFinal = String(estado).toUpperCase();
-        }
-
-        if (!['DEUDOR', 'PAGADA'].includes(estadoFinal)) {
-            throw crearHttpError('Estado invalido. Use DEUDOR o PAGADA');
-        }
-
-        if (!proveedor) {
-            throw crearHttpError('Debe informar proveedor');
-        }
-        if (!items.length) {
-            throw crearHttpError('Debe informar al menos un item');
-        }
-
-        const { itemsProcesados, totalOrden } = await procesarItemsOrden(items, session);
+            estadoFinal,
+            itemsProcesados,
+            totalOrden
+        } = await construirPayloadOrden(req.body, session);
 
         const orden = new OrdenCompra({
             numero,
             proveedor: proveedor || undefined,
-            fechaOrden: fechaOrden || undefined,
+            fechaOrden,
             anotaciones,
             estado: estadoFinal,
             items: itemsProcesados,
@@ -316,6 +355,66 @@ const crearOrdenCompra = async (req, res) => {
             .populate('items.articulo', 'nombre talles');
 
         res.status(201).json(ordenGuardada);
+    } catch (error) {
+        await session.abortTransaction();
+        res.status(error.status || 500).json({ msg: error.message });
+    } finally {
+        session.endSession();
+    }
+};
+
+const modificarOrdenCompra = async (req, res) => {
+    const session = await OrdenCompra.startSession();
+    session.startTransaction();
+
+    try {
+        const { id } = req.params;
+        const orden = await OrdenCompra.findById(id).session(session);
+
+        if (!orden) throw crearHttpError('Orden no encontrada', 404);
+        if (orden.estado === 'PAGADA') {
+            throw crearHttpError('No se puede modificar una orden pagada');
+        }
+
+        const tieneRecepciones = (orden.items || []).some((item) => Number(item.cantidadRecibida || 0) > 0);
+        if (tieneRecepciones) {
+            throw crearHttpError('No se puede modificar una orden con articulos ya recibidos');
+        }
+
+        const {
+            numero,
+            proveedor,
+            fechaOrden,
+            anotaciones,
+            estadoFinal,
+            itemsProcesados,
+            totalOrden
+        } = await construirPayloadOrden(
+            {
+                ...req.body,
+                numero: req.body?.numero || orden.numero,
+                estado: req.body?.estado || orden.estado
+            },
+            session
+        );
+
+        orden.numero = numero;
+        orden.proveedor = proveedor;
+        if (fechaOrden) orden.fechaOrden = fechaOrden;
+        orden.anotaciones = anotaciones;
+        orden.estado = estadoFinal;
+        orden.items = itemsProcesados;
+        orden.totalOrden = totalOrden;
+
+        await orden.save({ session });
+        await actualizarUltimosCostosCompra(itemsProcesados, session);
+        await session.commitTransaction();
+
+        const ordenGuardada = await OrdenCompra.findById(orden._id)
+            .populate('proveedor', 'nombre apellido razonSocial numeroCliente numeroProveedor')
+            .populate('items.articulo', 'nombre talles codigoArticulo');
+
+        res.json(ordenGuardada);
     } catch (error) {
         await session.abortTransaction();
         res.status(error.status || 500).json({ msg: error.message });
@@ -552,6 +651,7 @@ const eliminarOrdenCompra = async (req, res) => {
 
 module.exports = {
     crearOrdenCompra,
+    modificarOrdenCompra,
     obtenerOrdenesCompra,
     obtenerOrdenCompraPorId,
     obtenerOrdenesPorProveedor,

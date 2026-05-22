@@ -5,6 +5,13 @@ const CryptoJS = require('crypto-js');
 
 const escaparRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const normalizarTexto = (value) => String(value || '').trim();
+const formatearCodigo = (value) => String(Number(value || 0)).padStart(4, '0');
+const normalizarCodigoPersona = (value) => {
+    const texto = normalizarTexto(value);
+    if (!texto) return '';
+    const numero = Number(texto);
+    return Number.isFinite(numero) ? formatearCodigo(numero) : texto.toUpperCase();
+};
 
 const buscarPersonaDuplicada = async ({ idExcluir, nombre, apellido, email, dni }) => {
     const nombreNormalizado = normalizarTexto(nombre);
@@ -266,8 +273,8 @@ const modificarProveedorCliente = async (req, res) => {
         if (telefono !== undefined) usuario.telefono = telefono;
         if (direccion !== undefined) usuario.direccion = direccion;
         if (nota !== undefined) usuario.nota = nota;
-        if (numeroCliente !== undefined) usuario.numeroCliente = numeroCliente;
-        if (numeroProveedor !== undefined) usuario.numeroProveedor = numeroProveedor;
+        if (numeroCliente !== undefined) usuario.numeroCliente = normalizarCodigoPersona(numeroCliente);
+        if (numeroProveedor !== undefined) usuario.numeroProveedor = normalizarCodigoPersona(numeroProveedor);
 
         await usuario.save();
 

@@ -6,15 +6,26 @@ const jwt = require('jsonwebtoken');
 const escaparRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const normalizarTexto = (value) => String(value || '').trim();
+const formatearCodigo = (value) => String(Number(value || 0)).padStart(4, '0');
+const normalizarCodigoPersona = (value) => {
+    const texto = normalizarTexto(value);
+    if (!texto) return '';
+    const numero = Number(texto);
+    return Number.isFinite(numero) ? formatearCodigo(numero) : texto.toUpperCase();
+};
 
 const getProximoNumeroPersona = async (rol, campo) => {
-    const ultimo = await Persona.findOne({
+    const personas = await Persona.find({
         rol,
         [campo]: { $exists: true, $ne: null }
-    }).sort({ [campo]: -1 }).select(campo);
+    }).select(campo).lean();
 
-    const ultimoNumero = Number(ultimo?.[campo] || 0);
-    return Number.isFinite(ultimoNumero) ? ultimoNumero + 1 : 1;
+    const ultimoNumero = personas.reduce((max, persona) => {
+        const numero = Number(persona?.[campo] || 0);
+        return Number.isFinite(numero) && numero > max ? numero : max;
+    }, 0);
+
+    return formatearCodigo(ultimoNumero + 1);
 };
 
 const buscarPersonaDuplicada = async ({ nombre, apellido, email, dni }) => {
@@ -164,12 +175,12 @@ const registrar = async (req, res) => {
         }
 
         const numeroClienteFinal = rolUpper === "CLIENTE"
-            ? (numeroCliente || await getProximoNumeroPersona("CLIENTE", "numeroCliente"))
-            : numeroCliente;
+            ? (normalizarCodigoPersona(numeroCliente) || await getProximoNumeroPersona("CLIENTE", "numeroCliente"))
+            : normalizarCodigoPersona(numeroCliente);
 
         const numeroProveedorFinal = rolUpper === "PROVEEDOR"
-            ? (numeroProveedor || await getProximoNumeroPersona("PROVEEDOR", "numeroProveedor"))
-            : numeroProveedor;
+            ? (normalizarCodigoPersona(numeroProveedor) || await getProximoNumeroPersona("PROVEEDOR", "numeroProveedor"))
+            : normalizarCodigoPersona(numeroProveedor);
 
         // Crear Persona
         const persona = await Persona.create({
@@ -225,8 +236,31 @@ const registrar = async (req, res) => {
     }
 };
 
+const obtenerSiguienteCodigoPersona = async (req, res) => {
+    try {
+        const rol = String(req.query?.rol || req.params?.rol || '').toUpperCase();
+
+        if (!['CLIENTE', 'PROVEEDOR'].includes(rol)) {
+            return res.status(400).json({ msg: 'Rol invalido. Use CLIENTE o PROVEEDOR' });
+        }
+
+        const campo = rol === 'PROVEEDOR' ? 'numeroProveedor' : 'numeroCliente';
+        const codigo = await getProximoNumeroPersona(rol, campo);
+
+        return res.json({
+            rol,
+            campo,
+            codigo,
+            siguiente: codigo
+        });
+    } catch (error) {
+        return res.status(500).json({ msg: 'Error al obtener siguiente codigo', error: error.message });
+    }
+};
+
 
 module.exports = {
     login,
-    registrar
+    registrar,
+    obtenerSiguienteCodigoPersona
 }
