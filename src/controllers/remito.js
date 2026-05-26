@@ -189,9 +189,6 @@ const aplicarAjusteEnTalle = async ({
     tienda
 }) => {
     const stockFinal = Number(articulo.talles[indiceTalle].stock || 0) + cantidad;
-    if (stockFinal < 0) {
-        throw new Error(`Stock insuficiente para el articulo ${articulo.nombre}`);
-    }
 
     articulo.talles[indiceTalle].stock = stockFinal;
     await articulo.save();
@@ -218,9 +215,6 @@ const aplicarAjusteEnStockRaiz = async ({
     tienda
 }) => {
     const stockFinal = Number(articulo.stock || 0) + cantidad;
-    if (stockFinal < 0) {
-        throw new Error(`Stock insuficiente para el articulo ${articulo.nombre}`);
-    }
 
     articulo.stock = stockFinal;
 
@@ -273,6 +267,13 @@ const prepararAjustesStockPedido = async (pedido = [], { factor = -1 } = {}) => 
         const talleVenta = articulo.talles[indiceTalleVenta];
 
         if (talleVenta.artCompuesto) {
+            ajustes.push({
+                articulo,
+                indiceTalle: indiceTalleVenta,
+                tipo: 'talle',
+                cantidad: cantidadItem
+            });
+
             for (const componente of talleVenta.composicion || []) {
                 const articuloComponente = await Articulo.findById(componente.articulo);
                 if (!articuloComponente) {
@@ -297,38 +298,6 @@ const prepararAjustesStockPedido = async (pedido = [], { factor = -1 } = {}) => 
     }
 
     return ajustes;
-};
-
-const getStockActualAjuste = (ajuste) => {
-    if (ajuste.tipo === 'stockRaiz') {
-        return Number(ajuste.articulo.stock || 0);
-    }
-
-    return Number(ajuste.articulo.talles?.[ajuste.indiceTalle]?.stock || 0);
-};
-
-const getClaveAjusteStock = (ajuste) => (
-    ajuste.tipo === 'stockRaiz'
-        ? `${ajuste.articulo._id}::stockRaiz`
-        : `${ajuste.articulo._id}::talle::${ajuste.indiceTalle}`
-);
-
-const validarStockSuficiente = (ajustes = []) => {
-    const stockProyectado = new Map();
-
-    for (const ajuste of ajustes) {
-        const clave = getClaveAjusteStock(ajuste);
-        const stockActual = stockProyectado.has(clave)
-            ? stockProyectado.get(clave)
-            : getStockActualAjuste(ajuste);
-        const stockFinal = stockActual + Number(ajuste.cantidad || 0);
-
-        if (stockFinal < 0) {
-            throw new Error(`Stock insuficiente para el articulo ${ajuste.articulo.nombre}`);
-        }
-
-        stockProyectado.set(clave, stockFinal);
-    }
 };
 
 const aplicarAjustesStock = async (ajustes = [], {
@@ -492,7 +461,6 @@ const crearRemito = async (req, res) => {
     try {
         const payload = construirPayloadRemito(req.body);
         const ajustesStock = await prepararAjustesStockPedido(payload.pedido, { factor: -1 });
-        validarStockSuficiente(ajustesStock);
         const numeroRemito = await obtenerSiguienteNumeroRemito();
         const nuevoRemito = new Remito({
             ...payload,
@@ -723,7 +691,6 @@ const modificarRemito = async (req, res) => {
         const ajustesNuevos = debeAjustarPedido
             ? await prepararAjustesStockPedido(payload.pedido, { factor: -1 })
             : [];
-        validarStockSuficiente([...ajustesRestaurar, ...ajustesNuevos]);
 
         Object.assign(remito, payload);
 

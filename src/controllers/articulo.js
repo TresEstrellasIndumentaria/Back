@@ -220,8 +220,15 @@ const validarItemProveedorDuplicadoConStock = async ({ codigoArticulo, nombre, i
     }
 };
 
-const descontarStockComponentes = async (talles = []) => {
+const crearAdvertenciaStockNegativo = ({ componente, talleKey, stockFinal }) => {
+    const talleTexto = talleKey ? ` talle ${talleKey}` : '';
+    return `El componente ${componente.nombre}${talleTexto} quedo con stock negativo (${stockFinal})`;
+};
+
+const descontarStockComponentes = async (talles = [], opciones = {}) => {
     const descuentos = new Map();
+    const permitirStockNegativo = Boolean(opciones.permitirStockNegativo);
+    const advertencias = [];
 
     for (const talle of talles) {
         if (!talle.artCompuesto) continue;
@@ -264,7 +271,15 @@ const descontarStockComponentes = async (talles = []) => {
                 const stockActual = Number(componente.stock || 0);
                 const stockFinal = stockActual - cantidadADescontar;
                 if (stockFinal < 0) {
-                    throw new Error(`Stock insuficiente para el componente ${componente.nombre}`);
+                    if (!permitirStockNegativo) {
+                        throw new Error(`Stock insuficiente para el componente ${componente.nombre}`);
+                    }
+
+                    advertencias.push(crearAdvertenciaStockNegativo({
+                        componente,
+                        talleKey: '',
+                        stockFinal
+                    }));
                 }
 
                 componente.stock = stockFinal;
@@ -287,7 +302,15 @@ const descontarStockComponentes = async (talles = []) => {
             const stockActual = Math.max(stockActualTalle, stockActualRaiz);
             const stockFinal = stockActual - cantidadADescontar;
             if (stockFinal < 0) {
-                throw new Error(`Stock insuficiente para el componente ${componente.nombre}`);
+                if (!permitirStockNegativo) {
+                    throw new Error(`Stock insuficiente para el componente ${componente.nombre}`);
+                }
+
+                advertencias.push(crearAdvertenciaStockNegativo({
+                    componente,
+                    talleKey,
+                    stockFinal
+                }));
             }
 
             componente.talles[indiceTalle].stock = stockFinal;
@@ -302,6 +325,11 @@ const descontarStockComponentes = async (talles = []) => {
     for (const componente of componentesAActualizar) {
         await componente.save();
     }
+
+    return {
+        advertencias,
+        componentesActualizados: componentesAActualizar
+    };
 };
 
 const obtenerDescuentosPorAumentoStockCompuesto = (tallesActuales = [], tallesNuevos = []) => {
@@ -334,7 +362,9 @@ const obtenerDescuentosPorAumentoStockCompuesto = (tallesActuales = [], tallesNu
 // ================================
 const traerArticulos = async (req, res) => {
     try {
-        const articulos = await Articulo.find().populate('categoria', 'nombre');
+        const articulos = await Articulo.find()
+            .populate('categoria', 'nombre')
+            .populate('talles.composicion.articulo', 'nombre codigoArticulo codigo codArticulo talles stock coste costo precio itemProveedor');
         res.json(articulos);
     } catch (error) {
         res.status(500).json({ msg: 'Error al obtener los articulos', error: error.message });
@@ -348,7 +378,9 @@ const traerArticulo = async (req, res) => {
     const { id } = req.params;
 
     try {
-        const articulo = await Articulo.findById(id).populate('categoria', 'nombre');
+        const articulo = await Articulo.findById(id)
+            .populate('categoria', 'nombre')
+            .populate('talles.composicion.articulo', 'nombre codigoArticulo codigo codArticulo talles stock coste costo precio itemProveedor');
         if (!articulo) {
             return res.status(404).json({ msg: 'Articulo no encontrado' });
         }
@@ -435,7 +467,10 @@ const crearArticulo = async (req, res) => {
             talles: tallesNormalizados
         });
 
-        await descontarStockComponentes(tallesNormalizados);
+        const resultadoComponentes = await descontarStockComponentes(
+            tallesNormalizados,
+            { permitirStockNegativo: true }
+        );
         await nuevoArticulo.save();
 
         // Incrementar contador
@@ -443,7 +478,8 @@ const crearArticulo = async (req, res) => {
 
         res.status(201).json({
             msg: 'Articulo creado correctamente',
-            articulo: await nuevoArticulo.populate('categoria', 'nombre')
+            articulo: await nuevoArticulo.populate('categoria', 'nombre'),
+            advertencias: resultadoComponentes.advertencias
         });
     } catch (error) {
         res.status(500).json({
@@ -470,6 +506,7 @@ const modificarArticulo = async (req, res) => {
             ? Boolean(itemProveedor)
             : Boolean(articulo.itemProveedor);
         const nombreFinal = nombre ?? articulo.nombre;
+        let resultadoComponentes = { advertencias: [], componentesActualizados: [] };
 
         articulo.nombre = nombreFinal;
         articulo.descripcion = descripcion ?? articulo.descripcion;
@@ -523,7 +560,10 @@ const modificarArticulo = async (req, res) => {
             validarTallesDuplicados(tallesNormalizados);
             validarTallesEliminados(articulo.talles, tallesNormalizados);
             const descuentosComponentes = obtenerDescuentosPorAumentoStockCompuesto(articulo.talles, tallesNormalizados);
-            await descontarStockComponentes(descuentosComponentes);
+            resultadoComponentes = await descontarStockComponentes(
+                descuentosComponentes,
+                { permitirStockNegativo: true }
+            );
             articulo.talles = tallesNormalizados;
 
             if (esItemProveedor) {
@@ -569,7 +609,8 @@ const modificarArticulo = async (req, res) => {
 
         res.json({
             msg: 'Articulo modificado correctamente',
-            articulo: await articulo.populate('categoria', 'nombre')
+            articulo: await articulo.populate('categoria', 'nombre'),
+            advertencias: resultadoComponentes?.advertencias || []
         });
     } catch (error) {
         res.status(500).json({ msg: 'Error al modificar el articulo', error: error.message });
@@ -642,6 +683,7 @@ const modificarStockArticulo = async (req, res) => {
         let ajuste = 0;
         let talleMovimiento = '';
         let stockFinal = 0;
+        let resultadoComponentes = { advertencias: [], componentesActualizados: [] };
 
         if (talle !== undefined && talle !== null && String(talle).trim() !== '') {
             const talleBuscado = String(talle).trim().toUpperCase();
@@ -661,12 +703,15 @@ const modificarStockArticulo = async (req, res) => {
             stockFinal = nuevoStock;
 
             if (articulo.talles[indiceTalle].artCompuesto && ajuste > 0) {
-                await descontarStockComponentes([
-                    {
-                        ...articulo.talles[indiceTalle].toObject(),
-                        stock: ajuste
-                    }
-                ]);
+                resultadoComponentes = await descontarStockComponentes(
+                    [
+                        {
+                            ...articulo.talles[indiceTalle].toObject(),
+                            stock: ajuste
+                        }
+                    ],
+                    { permitirStockNegativo: true }
+                );
             }
         } else if (articulo.itemProveedor || !tieneTalles || articulo.talles.length === 1) {
             const stockAnterior = Number(articulo.stock || articulo.talles?.[0]?.stock || 0);
@@ -679,6 +724,18 @@ const modificarStockArticulo = async (req, res) => {
 
             ajuste = nuevoStock - stockAnterior;
             stockFinal = nuevoStock;
+
+            if (tieneTalles && articulo.talles.length === 1 && articulo.talles[0].artCompuesto && ajuste > 0) {
+                resultadoComponentes = await descontarStockComponentes(
+                    [
+                        {
+                            ...articulo.talles[0].toObject(),
+                            stock: ajuste
+                        }
+                    ],
+                    { permitirStockNegativo: true }
+                );
+            }
         } else {
             return res.status(400).json({
                 msg: 'Este articulo maneja stock por talle. Envie tambien el campo talle'
@@ -688,9 +745,9 @@ const modificarStockArticulo = async (req, res) => {
         await articulo.save();
 
         if (ajuste !== 0) {
-            const talleActual = articulo.talles.find(
+            const talleActual = Array.isArray(articulo.talles) ? articulo.talles.find(
                 (item) => claveTalle(item.talle) === claveTalle(talleMovimiento)
-            );
+            ) : null;
             const costeMovimiento = Number(coste ?? talleActual?.coste ?? 0);
 
             await MovimientoInventario.create({
@@ -708,7 +765,9 @@ const modificarStockArticulo = async (req, res) => {
 
         return res.json({
             msg: 'Stock actualizado correctamente',
-            articulo
+            articulo,
+            advertencias: resultadoComponentes.advertencias,
+            articulosActualizados: [articulo, ...resultadoComponentes.componentesActualizados]
         });
     } catch (error) {
         console.log('ERROR modificarStockArticulo:', error);
