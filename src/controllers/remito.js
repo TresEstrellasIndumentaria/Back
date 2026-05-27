@@ -241,59 +241,69 @@ const aplicarAjusteEnStockRaiz = async ({
     });
 };
 
-const prepararAjustesStockPedido = async (pedido = [], { factor = -1 } = {}) => {
+const describirItemPedido = (item) => item?.codigoArticulo || item?.prenda || item?.articulo || 'sin identificar';
+
+const prepararAjustesStockPedido = async (pedido = [], { factor = -1, onError = null } = {}) => {
     const cacheArticulos = new Map();
     const ajustes = [];
 
     for (const item of pedido) {
-        const articulo = await buscarArticuloParaItem(item, cacheArticulos);
-        if (!articulo) {
-            throw new Error(`No se encontro el articulo del item ${item.prenda}`);
-        }
+        try {
+            const articulo = await buscarArticuloParaItem(item, cacheArticulos);
+            if (!articulo) {
+                throw new Error(`No se encontro el articulo del item ${describirItemPedido(item)}`);
+            }
 
-        const cantidadItem = Number(item.cantidad || 0) * factor;
-        const tieneTalles = Array.isArray(articulo.talles) && articulo.talles.length;
+            const cantidadItem = Number(item.cantidad || 0) * factor;
+            const tieneTalles = Array.isArray(articulo.talles) && articulo.talles.length;
 
-        if (articulo.itemProveedor || !tieneTalles) {
-            ajustes.push({
-                articulo,
-                tipo: 'stockRaiz',
-                cantidad: cantidadItem
-            });
-            continue;
-        }
-
-        const indiceTalleVenta = resolverIndiceTalleParaAjuste(articulo, item.talle);
-        const talleVenta = articulo.talles[indiceTalleVenta];
-
-        if (talleVenta.artCompuesto) {
-            ajustes.push({
-                articulo,
-                indiceTalle: indiceTalleVenta,
-                tipo: 'talle',
-                cantidad: cantidadItem
-            });
-
-            for (const componente of talleVenta.composicion || []) {
-                const articuloComponente = await Articulo.findById(componente.articulo);
-                if (!articuloComponente) {
-                    throw new Error(`Articulo de composicion no encontrado para ${articulo.nombre}`);
-                }
-
+            if (articulo.itemProveedor || !tieneTalles) {
                 ajustes.push({
-                    articulo: articuloComponente,
-                    indiceTalle: resolverIndiceTalleParaAjuste(articuloComponente, componente.talle),
+                    articulo,
+                    tipo: 'stockRaiz',
+                    cantidad: cantidadItem
+                });
+                continue;
+            }
+
+            const indiceTalleVenta = resolverIndiceTalleParaAjuste(articulo, item.talle);
+            const talleVenta = articulo.talles[indiceTalleVenta];
+
+            if (talleVenta.artCompuesto) {
+                ajustes.push({
+                    articulo,
+                    indiceTalle: indiceTalleVenta,
                     tipo: 'talle',
-                    cantidad: cantidadItem * Number(componente.cantidad || 0)
+                    cantidad: cantidadItem
+                });
+
+                for (const componente of talleVenta.composicion || []) {
+                    const articuloComponente = await Articulo.findById(componente.articulo);
+                    if (!articuloComponente) {
+                        throw new Error(`Articulo de composicion no encontrado para ${articulo.nombre}`);
+                    }
+
+                    ajustes.push({
+                        articulo: articuloComponente,
+                        indiceTalle: resolverIndiceTalleParaAjuste(articuloComponente, componente.talle),
+                        tipo: 'talle',
+                        cantidad: cantidadItem * Number(componente.cantidad || 0)
+                    });
+                }
+            } else {
+                ajustes.push({
+                    articulo,
+                    indiceTalle: indiceTalleVenta,
+                    tipo: 'talle',
+                    cantidad: cantidadItem
                 });
             }
-        } else {
-            ajustes.push({
-                articulo,
-                indiceTalle: indiceTalleVenta,
-                tipo: 'talle',
-                cantidad: cantidadItem
-            });
+        } catch (error) {
+            if (typeof onError === 'function') {
+                onError(error, item);
+                continue;
+            }
+            throw error;
         }
     }
 
@@ -304,20 +314,29 @@ const aplicarAjustesStock = async (ajustes = [], {
     motivo = 'VENTA_REMITO',
     remito = null,
     colaborador = null,
-    tienda = ''
+    tienda = '',
+    onError = null
 } = {}) => {
     for (const ajuste of ajustes) {
-        const aplicarAjuste = ajuste.tipo === 'stockRaiz'
-            ? aplicarAjusteEnStockRaiz
-            : aplicarAjusteEnTalle;
+        try {
+            const aplicarAjuste = ajuste.tipo === 'stockRaiz'
+                ? aplicarAjusteEnStockRaiz
+                : aplicarAjusteEnTalle;
 
-        await aplicarAjuste({
-            ...ajuste,
-            motivo,
-            remito,
-            colaborador,
-            tienda
-        });
+            await aplicarAjuste({
+                ...ajuste,
+                motivo,
+                remito,
+                colaborador,
+                tienda
+            });
+        } catch (error) {
+            if (typeof onError === 'function') {
+                onError(error, ajuste);
+                continue;
+            }
+            throw error;
+        }
     }
 };
 
@@ -455,6 +474,17 @@ const parsearNumeroRemito = (valor) => {
 const buscarRemitoPorNumero = async (valor) => {
     const numeroRemito = parsearNumeroRemito(valor);
     return Remito.findOne({ numeroRemito });
+};
+
+const buscarRemitoPorIdONumero = async (valor) => {
+    const texto = limpiarTexto(valor);
+    if (!texto) return null;
+
+    if (mongoose.Types.ObjectId.isValid(texto)) {
+        return Remito.findById(texto);
+    }
+
+    return buscarRemitoPorNumero(texto);
 };
 
 const crearRemito = async (req, res) => {
@@ -750,26 +780,40 @@ const eliminarRemito = async (req, res) => {
     const { id } = req.params;
 
     try {
-        const remito = await Remito.findById(id);
+        const remito = await buscarRemitoPorIdONumero(id);
         if (!remito) {
             return res.status(404).json({ msg: 'Remito no encontrado' });
         }
 
-        const ajustesStock = await prepararAjustesStockPedido(remito.pedido, { factor: 1 });
+        const advertencias = [];
+        const ajustesStock = await prepararAjustesStockPedido(remito.pedido, {
+            factor: 1,
+            onError: (error, item) => {
+                advertencias.push(`No se pudo preparar stock para ${describirItemPedido(item)}: ${error.message}`);
+            }
+        });
+
         await aplicarAjustesStock(ajustesStock, {
             motivo: 'ELIMINACION_REMITO',
             remito,
             colaborador: req.user?.id || req.body?.colaborador,
-            tienda: req.body?.tienda
+            tienda: req.body?.tienda,
+            onError: (error, ajuste) => {
+                const articulo = ajuste?.articulo?.nombre || ajuste?.articulo?._id || 'articulo sin identificar';
+                advertencias.push(`No se pudo revertir stock para ${articulo}: ${error.message}`);
+            }
         });
-        await Remito.findByIdAndDelete(id);
+
+        await Remito.findByIdAndDelete(remito._id);
 
         return res.json({
             msg: 'Remito eliminado correctamente',
-            idEliminado: id
+            idEliminado: remito._id,
+            advertencias
         });
     } catch (error) {
-        return res.status(500).json({ msg: 'Error al eliminar el remito', error: error.message });
+        const status = error.message.includes('numeroRemito invalido') ? 400 : 500;
+        return res.status(status).json({ msg: 'Error al eliminar el remito', error: error.message });
     }
 };
 
