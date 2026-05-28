@@ -15,8 +15,11 @@ const PersonaSchema = new Schema(
         },
         email: {
             type: String,
-            unique: true,
-            sparse: true,
+            trim: true,
+            set: (value) => {
+                const texto = String(value || '').trim().toLowerCase();
+                return texto || undefined;
+            },
         },
         password: {
             type: String,
@@ -55,6 +58,14 @@ const PersonaSchema = new Schema(
         },
     },
     { timestamps: true }
+);
+
+PersonaSchema.index(
+    { email: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { email: { $type: 'string' } }
+    }
 );
 
 module.exports = model('Persona', PersonaSchema);

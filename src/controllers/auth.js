@@ -19,7 +19,7 @@ const tieneTelefono = (telefono) => {
         return Boolean(normalizarTexto(telefono));
     }
 
-    return Boolean(normalizarTexto(telefono?.numero ?? telefono?.telefono));
+    return Boolean(normalizarTexto(telefono?.area)) && Boolean(normalizarTexto(telefono?.numero ?? telefono?.telefono));
 };
 
 const getProximoNumeroPersona = async (rol, campo) => {
@@ -156,7 +156,7 @@ const registrar = async (req, res) => {
 
         if (rolUpper === "CLIENTE" && !tieneTelefono(telefono)) {
             return res.status(400).json({
-                message: "Nombre, apellido y telefono son obligatorios para clientes"
+                message: "Nombre, apellido, area y telefono son obligatorios para clientes"
             });
         }
 

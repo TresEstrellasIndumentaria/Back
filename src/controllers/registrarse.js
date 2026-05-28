@@ -1,28 +1,49 @@
 const Usuario = require('../models/persona');
 const CryptoJS = require('crypto-js');
-//no se usa
-// Crea usuario
-const registrarse = async (req, res) => {
-    try {
-        const { nombre, apellido, dni, email, password, foto, telefono, direccion, rol } = req.body;
 
-        // Validación de campos obligatorios
-        if (
-            !nombre?.trim() ||
-            !apellido?.trim() ||
-            !dni?.trim() ||
-            !email?.trim() ||
-            !password?.trim() ||
-            !telefono?.area ||
-            !telefono?.numero
-        ) {
-            return res.status(400).json({ message: "Faltan campos obligatorios" });
+const normalizarTexto = (value) => String(value || '').trim();
+
+const tieneTelefonoCliente = (telefono) => (
+    Boolean(normalizarTexto(telefono?.area)) && Boolean(normalizarTexto(telefono?.numero))
+);
+
+// Crea usuario
+const registrarse = async (req, res) => { console.log("data:", req.body)
+    try {
+        const {
+            nombre,
+            apellido,
+            dni,
+            email,
+            password,
+            foto,
+            telefono,
+            direccion,
+            rol,
+            rolAsignado
+        } = req.body;
+
+        const rolFinal = normalizarTexto(rol || rolAsignado || 'CLIENTE').toUpperCase();
+        const esCliente = rolFinal === 'CLIENTE';
+        const nombreTrim = normalizarTexto(nombre);
+        const apellidoTrim = normalizarTexto(apellido);
+        const dniTexto = normalizarTexto(dni);
+        const emailLower = normalizarTexto(email).toLowerCase();
+
+        if (!nombreTrim || !apellidoTrim || (esCliente && !tieneTelefonoCliente(telefono))) {
+            return res.status(400).json({
+                message: esCliente
+                    ? 'Nombre, apellido, area y telefono son obligatorios'
+                    : 'Faltan campos obligatorios'
+            });
         }
 
-        // Buscar duplicados (comparación sin mayúsculas/minúsculas)
-        const nombreLower = nombre.trim().toLowerCase();
-        const apellidoLower = apellido.trim().toLowerCase();
-        const emailLower = email.trim().toLowerCase();
+        if (!esCliente && (!dniTexto || !emailLower || !normalizarTexto(password) || !tieneTelefonoCliente(telefono))) {
+            return res.status(400).json({ message: 'Faltan campos obligatorios' });
+        }
+
+        const nombreLower = nombreTrim.toLowerCase();
+        const apellidoLower = apellidoTrim.toLowerCase();
 
         const existeNombreApellido = await Usuario.findOne({
             nombre: { $regex: new RegExp(`^${nombreLower}$`, 'i') },
@@ -30,61 +51,68 @@ const registrarse = async (req, res) => {
         });
         if (existeNombreApellido) {
             return res.status(400).json({
-                message: `Ya existe un usuario con el nombre y apellido: ${nombre} ${apellido}`
+                message: `Ya existe un usuario con el nombre y apellido: ${nombreTrim} ${apellidoTrim}`
             });
         }
 
-        const existeEmail = await Usuario.findOne({
-            email: { $regex: new RegExp(`^${emailLower}$`, 'i') },
-        });
-        if (existeEmail) {
-            return res.status(400).json({
-                message: `Ya existe un usuario con el email: ${email}`
+        if (emailLower) {
+            const existeEmail = await Usuario.findOne({
+                email: { $regex: new RegExp(`^${emailLower}$`, 'i') },
             });
+            if (existeEmail) {
+                return res.status(400).json({
+                    message: `Ya existe un usuario con el email: ${email}`
+                });
+            }
         }
 
-        const existeDNI = await Usuario.findOne({ dni });
-        if (existeDNI) {
-            return res.status(400).json({
-                message: `Ya existe un usuario con el DNI: ${dni}`
-            });
+        if (dniTexto) {
+            const existeDNI = await Usuario.findOne({ dni: Number(dniTexto) });
+            if (existeDNI) {
+                return res.status(400).json({
+                    message: `Ya existe un usuario con el DNI: ${dni}`
+                });
+            }
         }
 
-        const existeTel = await Usuario.findOne({ "telefono.numero": telefono.numero });
+        const existeTel = await Usuario.findOne({ 'telefono.numero': telefono.numero });
         if (existeTel) {
             return res.status(400).json({
-                message: `Ya existe un usuario con el teléfono: ${telefono.numero}`
+                message: `Ya existe un usuario con el telefono: ${telefono.numero}`
             });
         }
 
-        // Encriptar contraseña
-        if (!process.env.PASS_SEC) {
-            console.error("Falta la variable PASS_SEC en el archivo .env");
+        if (password && !process.env.PASS_SEC) {
+            console.error('Falta la variable PASS_SEC en el archivo .env');
             return res.status(500).json({
-                message: "Error en configuración del servidor. Faltan variables de entorno."
+                message: 'Error en configuracion del servidor. Faltan variables de entorno.'
             });
         }
 
-        const passwordEncript = CryptoJS.AES.encrypt(password, process.env.PASS_SEC).toString();
+        const passwordEncript = password
+            ? CryptoJS.AES.encrypt(password, process.env.PASS_SEC).toString()
+            : undefined;
 
-        // Crear nuevo usuario
         const newUsuario = new Usuario({
-            nombre,
-            apellido,
-            dni,
-            email: emailLower,
+            nombre: nombreTrim,
+            apellido: apellidoTrim,
+            dni: dniTexto ? Number(dniTexto) : undefined,
+            email: emailLower || undefined,
             password: passwordEncript,
-            foto: foto || "",
-            telefono,
+            foto: foto || '',
+            telefono: {
+                area: normalizarTexto(telefono?.area),
+                numero: normalizarTexto(telefono?.numero)
+            },
             direccion,
-            rol,
-            nombreApellido: `${nombre} ${apellido}`,
+            rol: rolFinal,
+            nombreApellido: `${nombreTrim} ${apellidoTrim}`,
         });
 
         await newUsuario.save();
 
         return res.status(201).json({
-            message: "Usuario creado correctamente",
+            message: 'Usuario creado correctamente',
             usuario: {
                 id: newUsuario._id,
                 nombre: newUsuario.nombre,
@@ -94,9 +122,9 @@ const registrarse = async (req, res) => {
             }
         });
     } catch (error) {
-        console.error("Error al crear usuario:", error);
+        console.error('Error al crear usuario:', error);
         return res.status(500).json({
-            message: "Error interno del servidor",
+            message: 'Error interno del servidor',
             error: error.message
         });
     }

@@ -23,7 +23,7 @@ const createAdminIfNotExists = async () => {
             email: process.env.INIT_ADMIN_EMAIL,
             telefono: 123456,
             direccion: "asdad",
-            roles: ["ADMIN"]
+            rol: "ADMIN"
         });
 
         // 2️⃣ Encriptar password (ANTES de usarlo)

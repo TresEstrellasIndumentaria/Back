@@ -18,7 +18,7 @@ const tieneTelefono = (telefono) => {
         return Boolean(normalizarTexto(telefono));
     }
 
-    return Boolean(normalizarTexto(telefono?.numero ?? telefono?.telefono));
+    return Boolean(normalizarTexto(telefono?.area)) && Boolean(normalizarTexto(telefono?.numero ?? telefono?.telefono));
 };
 
 const buscarPersonaDuplicada = async ({ idExcluir, nombre, apellido, email, dni }) => {
@@ -257,7 +257,7 @@ const modificarProveedorCliente = async (req, res) => {
 
         const telefonoFinal = telefono !== undefined ? telefono : usuario.telefono;
         if (usuario.rol === 'CLIENTE' && !tieneTelefono(telefonoFinal)) {
-            return res.status(400).json({ msg: 'Nombre, apellido y telefono son obligatorios para clientes' });
+            return res.status(400).json({ msg: 'Nombre, apellido, area y telefono son obligatorios para clientes' });
         }
 
         if (dniTexto && !Number.isFinite(Number(dniFinal))) {

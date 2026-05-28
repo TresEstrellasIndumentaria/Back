@@ -25,26 +25,30 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// DB
-dbConnection();
+const startServer = async () => {
+  // DB
+  await dbConnection();
 
-//disparo createAdmin
-createAdmin();
+  //disparo createAdmin
+  await createAdmin();
 
-// Rutas
-app.use("/auth", authRoutes);
-app.use("/personas", personaRoutes);
-app.use("/articulos", routerArticulo);
-app.use("/categorias", routerCategoria);
-app.use('/ordenesCompraProv', ordenCompraRoutes);
-app.use('/remitos', remitoRoutes);
-app.use('/recibos', reciboRoutes);
-app.use('/pagos-proveedor', pagoProveedorRoutes);
-app.use('/cuentas-corrientes', cuentaCorrienteRoutes);
+  // Rutas
+  app.use("/auth", authRoutes);
+  app.use("/personas", personaRoutes);
+  app.use("/articulos", routerArticulo);
+  app.use("/categorias", routerCategoria);
+  app.use('/ordenesCompraProv', ordenCompraRoutes);
+  app.use('/remitos', remitoRoutes);
+  app.use('/recibos', reciboRoutes);
+  app.use('/pagos-proveedor', pagoProveedorRoutes);
+  app.use('/cuentas-corrientes', cuentaCorrienteRoutes);
 
-// Puerto
-const PORT = process.env.PORT || 3001;
+  // Puerto
+  const PORT = process.env.PORT || 3001;
 
-app.listen(PORT, () => {
+  app.listen(PORT, () => {
     console.log("Servidor escuchando en puerto:", PORT);
-});
+  });
+};
+
+startServer();
