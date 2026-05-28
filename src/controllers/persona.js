@@ -13,6 +13,14 @@ const normalizarCodigoPersona = (value) => {
     return Number.isFinite(numero) ? formatearCodigo(numero) : texto.toUpperCase();
 };
 
+const tieneTelefono = (telefono) => {
+    if (typeof telefono === 'string') {
+        return Boolean(normalizarTexto(telefono));
+    }
+
+    return Boolean(normalizarTexto(telefono?.numero ?? telefono?.telefono));
+};
+
 const buscarPersonaDuplicada = async ({ idExcluir, nombre, apellido, email, dni }) => {
     const nombreNormalizado = normalizarTexto(nombre);
     const apellidoNormalizado = normalizarTexto(apellido);
@@ -245,6 +253,11 @@ const modificarProveedorCliente = async (req, res) => {
 
         if (!nombreFinal || !apellidoFinal) {
             return res.status(400).json({ msg: 'Nombre y apellido son obligatorios' });
+        }
+
+        const telefonoFinal = telefono !== undefined ? telefono : usuario.telefono;
+        if (usuario.rol === 'CLIENTE' && !tieneTelefono(telefonoFinal)) {
+            return res.status(400).json({ msg: 'Nombre, apellido y telefono son obligatorios para clientes' });
         }
 
         if (dniTexto && !Number.isFinite(Number(dniFinal))) {

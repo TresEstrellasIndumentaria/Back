@@ -14,6 +14,14 @@ const normalizarCodigoPersona = (value) => {
     return Number.isFinite(numero) ? formatearCodigo(numero) : texto.toUpperCase();
 };
 
+const tieneTelefono = (telefono) => {
+    if (typeof telefono === 'string') {
+        return Boolean(normalizarTexto(telefono));
+    }
+
+    return Boolean(normalizarTexto(telefono?.numero ?? telefono?.telefono));
+};
+
 const getProximoNumeroPersona = async (rol, campo) => {
     const personas = await Persona.find({
         rol,
@@ -143,6 +151,12 @@ const registrar = async (req, res) => {
         if (!nombreTrim || !apellidoTrim || (!esClienteOProveedor && (!dniTexto || !emailLower))) {
             return res.status(400).json({
                 message: esClienteOProveedor ? "Nombre y apellido son obligatorios" : "Faltan campos obligatorios"
+            });
+        }
+
+        if (rolUpper === "CLIENTE" && !tieneTelefono(telefono)) {
+            return res.status(400).json({
+                message: "Nombre, apellido y telefono son obligatorios para clientes"
             });
         }
 
