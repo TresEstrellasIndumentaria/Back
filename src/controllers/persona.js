@@ -168,15 +168,18 @@ const modificarPersona = async (req, res) => {
             });
         }
 
+        let passwordEncriptada = null;
+
         // Password
         if (password && password.trim() !== "") {
             if (!process.env.PASS_SEC) {
                 return res.status(500).json({ message: "Error de configuración" });
             }
-            usuario.password = CryptoJS.AES.encrypt(
+            passwordEncriptada = CryptoJS.AES.encrypt(
                 password,
                 process.env.PASS_SEC
             ).toString();
+            usuario.password = passwordEncriptada;
         }
 
         // Campos permitidos
@@ -190,9 +193,14 @@ const modificarPersona = async (req, res) => {
         if (nota) usuario.nota = nota;
 
         await usuario.save();
+        const authPayload = { email: emailFinal };
+        if (passwordEncriptada) {
+            authPayload.password = passwordEncriptada;
+        }
+
         await UsuarioAuth.findOneAndUpdate(
             { personaId: usuario._id },
-            { email: emailFinal }
+            authPayload
         );
 
         return res.status(200).json({
@@ -434,6 +442,8 @@ const eliminarPersona = async (req, res) => {
                 message: 'Usuario no encontrado'
             });
         }
+
+        await UsuarioAuth.deleteMany({ personaId: usuario._id });
 
         res.status(200).json({
             message: 'Usuario eliminado correctamente',

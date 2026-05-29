@@ -188,6 +188,35 @@ const registrar = async (req, res) => {
             });
         }
 
+        const esUsuarioSistema = rolUpper === "ADMIN" || rolUpper === "EMPLEADO";
+        let authExistente = null;
+
+        if (esUsuarioSistema) {
+            if (!password) {
+                return res.status(400).json({
+                    message: "Password obligatorio para usuarios del sistema"
+                });
+            }
+
+            if (!process.env.PASS_SEC) {
+                return res.status(500).json({
+                    message: "Error de configuracion"
+                });
+            }
+
+            authExistente = await UsuarioAuth.findOne({ email: emailLower });
+            if (authExistente) {
+                const personaAuth = await Persona.findById(authExistente.personaId).select('_id');
+                if (personaAuth) {
+                    return res.status(400).json({
+                        message: "Ya existe un usuario de acceso con ese email"
+                    });
+                }
+
+                await UsuarioAuth.deleteOne({ _id: authExistente._id });
+            }
+        }
+
         const numeroClienteFinal = rolUpper === "CLIENTE"
             ? (normalizarCodigoPersona(numeroCliente) || await getProximoNumeroPersona("CLIENTE", "numeroCliente"))
             : normalizarCodigoPersona(numeroCliente);
@@ -196,12 +225,20 @@ const registrar = async (req, res) => {
             ? (normalizarCodigoPersona(numeroProveedor) || await getProximoNumeroPersona("PROVEEDOR", "numeroProveedor"))
             : normalizarCodigoPersona(numeroProveedor);
 
+        const passwordEncript = esUsuarioSistema
+            ? CryptoJS.AES.encrypt(
+                password,
+                process.env.PASS_SEC
+            ).toString()
+            : undefined;
+
         // Crear Persona
         const persona = await Persona.create({
             nombre: nombreTrim,
             apellido: apellidoTrim,
             dni: dniTexto ? dniNum : undefined,
             email: emailLower || undefined,
+            password: passwordEncript,
             telefono,
             direccion,
             nota,
@@ -213,27 +250,20 @@ const registrar = async (req, res) => {
 
         // Crear UsuarioAuth SOLO si es usuario del sistema
         let usuarioAuth = null;
-        const esUsuarioSistema = rolUpper === "ADMIN" || rolUpper === "EMPLEADO";
 
         if (esUsuarioSistema) {
-            if (!password) {
-                return res.status(400).json({
-                    message: "Password obligatorio para usuarios del sistema"
+            try {
+                usuarioAuth = await UsuarioAuth.create({
+                    personaId: persona._id,
+                    email: emailLower,
+                    password: passwordEncript,
+                    roles: [rolUpper],
+                    permisos: []
                 });
+            } catch (error) {
+                await Persona.findByIdAndDelete(persona._id);
+                throw error;
             }
-
-            const passwordEncript = CryptoJS.AES.encrypt(
-                password,
-                process.env.PASS_SEC
-            ).toString();
-
-            usuarioAuth = await UsuarioAuth.create({
-                personaId: persona._id,
-                email: emailLower,
-                password: passwordEncript,
-                roles: [rolUpper],
-                permisos: []
-            });
         }
 
         return res.status(201).json({

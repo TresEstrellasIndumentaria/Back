@@ -60,7 +60,7 @@ router.put(
 );
 
 //eliminar usuario
-router.delete('/eliminar/:id', eliminarPersona);
+router.delete('/eliminar/:id', verifyToken, isAdmin, eliminarPersona);
 
 //modif datos personales, solo pass usuario logueado
 router.put('/mis-datos', verifyToken, modificarMisDatos);
