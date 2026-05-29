@@ -2,6 +2,7 @@ const Remito = require('../models/remito');
 const Secuencia = require('../models/secuencia');
 const Articulo = require('../models/articulo');
 const MovimientoInventario = require('../models/movimientoInventario');
+const Recibo = require('../models/recibo');
 const normalizar = require('../helpers/normalizaNombreArt');
 const mongoose = require('mongoose');
 
@@ -307,6 +308,54 @@ const normalizarRemitoConRentabilidad = async (remito) => {
     }
 
     return completarRentabilidadPayload(data);
+};
+
+const aplicarImportesDebe = async (remitos = []) => {
+    if (!remitos.length) return remitos;
+
+    const numerosCliente = [...new Set(remitos.map((remito) => limpiarTexto(remito.numeroCliente)).filter(Boolean))];
+    if (!numerosCliente.length) return remitos;
+
+    const [remitosCliente, recibosCliente] = await Promise.all([
+        Remito.find({ numeroCliente: { $in: numerosCliente } })
+            .sort({ createdAt: 1, numeroRemito: 1 })
+            .select('_id numeroCliente estado importeTotal createdAt numeroRemito')
+            .lean(),
+        Recibo.find({ numeroCliente: { $in: numerosCliente } })
+            .select('numeroCliente importe')
+            .lean()
+    ]);
+
+    const cobrosPorCliente = recibosCliente.reduce((acc, recibo) => {
+        const numeroCliente = limpiarTexto(recibo.numeroCliente);
+        acc[numeroCliente] = (acc[numeroCliente] || 0) + Number(recibo.importe || 0);
+        return acc;
+    }, {});
+
+    const remitosPorCliente = remitosCliente.reduce((acc, remito) => {
+        const numeroCliente = limpiarTexto(remito.numeroCliente);
+        if (!acc[numeroCliente]) acc[numeroCliente] = [];
+        acc[numeroCliente].push(remito);
+        return acc;
+    }, {});
+
+    const deudaPorRemito = {};
+
+    Object.entries(remitosPorCliente).forEach(([numeroCliente, items]) => {
+        let saldoCobros = Number(cobrosPorCliente[numeroCliente] || 0);
+
+        items.forEach((remito) => {
+            const totalRemito = remito.estado === 'PAGADO' ? 0 : Number(remito.importeTotal || 0);
+            const aplicado = Math.min(totalRemito, saldoCobros);
+            saldoCobros = Math.max(0, saldoCobros - aplicado);
+            deudaPorRemito[String(remito._id)] = Math.max(0, totalRemito - aplicado);
+        });
+    });
+
+    return remitos.map((remito) => ({
+        ...remito,
+        importeDebe: deudaPorRemito[String(remito._id)] ?? (remito.estado === 'PENDIENTE' ? Number(remito.importeTotal || 0) : 0)
+    }));
 };
 
 const prepararAjustesStockPedido = async (pedido = [], { factor = -1, onError = null } = {}) => {
@@ -686,6 +735,7 @@ const traerRemitos = async (req, res) => {
             ])
         ]);
         const remitosConRentabilidad = await Promise.all(remitos.map(normalizarRemitoConRentabilidad));
+        const remitosConImporteDebe = await aplicarImportesDebe(remitosConRentabilidad);
 
         const resumenBase = resumenAgg[0] || {
             totalFacturado: 0,
@@ -698,7 +748,7 @@ const traerRemitos = async (req, res) => {
             total,
             page: pageNumber,
             totalPages: Math.ceil(total / limitNumber),
-            remitos: remitosConRentabilidad,
+            remitos: remitosConImporteDebe,
             resumen: {
                 ...resumenBase,
                 proyeccion: getProyeccionMes(resumenBase.totalFacturado, fechaHasta)
