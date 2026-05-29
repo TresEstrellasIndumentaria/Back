@@ -243,6 +243,72 @@ const aplicarAjusteEnStockRaiz = async ({
 
 const describirItemPedido = (item) => item?.codigoArticulo || item?.prenda || item?.articulo || 'sin identificar';
 
+const getCostoTalle = (talle) => Number(talle?.coste ?? talle?.costo ?? talle?.ultimoCostoCompra ?? 0);
+
+const getCostoArticulo = (articulo, talle = '') => {
+    if (!articulo) return 0;
+
+    const talles = Array.isArray(articulo.talles) ? articulo.talles : [];
+    if (talles.length) {
+        const talleKey = claveTalle(talle);
+        const talleSeleccionado = talleKey
+            ? talles.find((item) => claveTalle(item?.talle) === talleKey)
+            : null;
+        const talleBase = talleSeleccionado || (talles.length === 1 ? talles[0] : null);
+        if (talleBase) return getCostoTalle(talleBase);
+    }
+
+    return Number(articulo.ultimoCostoCompra ?? articulo.costo ?? articulo.coste ?? 0);
+};
+
+const enriquecerPedidoConCostos = async (pedido = []) => {
+    const cacheArticulos = new Map();
+
+    return Promise.all(pedido.map(async (item) => {
+        const articulo = await buscarArticuloParaItem(item, cacheArticulos);
+        const costoUnitario = getCostoArticulo(articulo, item.talle);
+        const costoTotal = Number(item.cantidad || 0) * costoUnitario;
+        const subtotal = Number(item.subtotal || 0);
+
+        return {
+            ...item,
+            costoUnitario,
+            costoTotal,
+            rentabilidad: subtotal - costoTotal
+        };
+    }));
+};
+
+const completarRentabilidadPayload = (payload) => {
+    const totalCosto = Array.isArray(payload.pedido)
+        ? payload.pedido.reduce((acc, item) => acc + Number(item.costoTotal || 0), 0)
+        : Number(payload.totalCosto || 0);
+
+    payload.totalCosto = totalCosto;
+    payload.rentabilidad = Number(payload.importeTotal || 0) - totalCosto;
+    return payload;
+};
+
+const prepararPayloadRentabilidad = async (payload) => {
+    if (Array.isArray(payload.pedido)) {
+        payload.pedido = await enriquecerPedidoConCostos(payload.pedido);
+    }
+
+    return completarRentabilidadPayload(payload);
+};
+
+const normalizarRemitoConRentabilidad = async (remito) => {
+    const data = typeof remito.toObject === 'function' ? remito.toObject({ virtuals: true }) : { ...remito };
+    const pedido = Array.isArray(data.pedido) ? data.pedido : [];
+    const tieneCostos = pedido.some((item) => Number(item?.costoTotal || 0) > 0);
+
+    if (!tieneCostos && pedido.length) {
+        data.pedido = await enriquecerPedidoConCostos(pedido);
+    }
+
+    return completarRentabilidadPayload(data);
+};
+
 const prepararAjustesStockPedido = async (pedido = [], { factor = -1, onError = null } = {}) => {
     const cacheArticulos = new Map();
     const ajustes = [];
@@ -489,7 +555,7 @@ const buscarRemitoPorIdONumero = async (valor) => {
 
 const crearRemito = async (req, res) => {
     try {
-        const payload = construirPayloadRemito(req.body);
+        const payload = await prepararPayloadRentabilidad(construirPayloadRemito(req.body));
         const ajustesStock = await prepararAjustesStockPedido(payload.pedido, { factor: -1 });
         const numeroRemito = await obtenerSiguienteNumeroRemito();
         const nuevoRemito = new Remito({
@@ -619,6 +685,7 @@ const traerRemitos = async (req, res) => {
                 }
             ])
         ]);
+        const remitosConRentabilidad = await Promise.all(remitos.map(normalizarRemitoConRentabilidad));
 
         const resumenBase = resumenAgg[0] || {
             totalFacturado: 0,
@@ -631,7 +698,7 @@ const traerRemitos = async (req, res) => {
             total,
             page: pageNumber,
             totalPages: Math.ceil(total / limitNumber),
-            remitos,
+            remitos: remitosConRentabilidad,
             resumen: {
                 ...resumenBase,
                 proyeccion: getProyeccionMes(resumenBase.totalFacturado, fechaHasta)
@@ -653,7 +720,7 @@ const traerRemito = async (req, res) => {
             return res.status(404).json({ msg: 'Remito no encontrado' });
         }
 
-        return res.json(remito);
+        return res.json(await normalizarRemitoConRentabilidad(remito));
     } catch (error) {
         return res.status(500).json({ msg: 'Error al obtener el remito', error: error.message });
     }
@@ -668,7 +735,7 @@ const traerRemitoPorNumero = async (req, res) => {
             return res.status(404).json({ msg: 'Remito no encontrado' });
         }
 
-        return res.json(remito);
+        return res.json(await normalizarRemitoConRentabilidad(remito));
     } catch (error) {
         const status = error.message.includes('numeroRemito invalido') ? 400 : 500;
         return res.status(status).json({ msg: 'Error al obtener el remito', error: error.message });
@@ -713,7 +780,10 @@ const modificarRemito = async (req, res) => {
             return res.status(404).json({ msg: 'Remito no encontrado' });
         }
 
-        const payload = construirPayloadRemito(req.body, { parcial: true });
+        const payloadBase = construirPayloadRemito(req.body, { parcial: true });
+        const payload = payloadBase.pedido !== undefined
+            ? await prepararPayloadRentabilidad(payloadBase)
+            : payloadBase;
         const debeAjustarPedido = payload.pedido !== undefined;
         const ajustesRestaurar = debeAjustarPedido
             ? await prepararAjustesStockPedido(remito.pedido, { factor: 1 })
@@ -723,6 +793,11 @@ const modificarRemito = async (req, res) => {
             : [];
 
         Object.assign(remito, payload);
+
+        if (!debeAjustarPedido) {
+            remito.totalCosto = Number(remito.totalCosto || 0);
+            remito.rentabilidad = Number(remito.importeTotal || 0) - remito.totalCosto;
+        }
 
         await remito.save();
 

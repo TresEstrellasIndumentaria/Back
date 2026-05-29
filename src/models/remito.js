@@ -46,6 +46,20 @@ const pedidoItemSchema = new mongoose.Schema(
             min: 0,
             default: 0
         },
+        costoUnitario: {
+            type: Number,
+            min: 0,
+            default: 0
+        },
+        costoTotal: {
+            type: Number,
+            min: 0,
+            default: 0
+        },
+        rentabilidad: {
+            type: Number,
+            default: 0
+        },
         observaciones: {
             type: String,
             trim: true,
@@ -114,6 +128,15 @@ const remitoSchema = new mongoose.Schema(
             type: Number,
             required: true,
             min: 0
+        },
+        totalCosto: {
+            type: Number,
+            min: 0,
+            default: 0
+        },
+        rentabilidad: {
+            type: Number,
+            default: 0
         },
         pedido: {
             type: [pedidoItemSchema],
