@@ -1,5 +1,6 @@
 const OrdenCompra = require('../models/ordenDeCompra');
 const Articulo = require('../models/articulo');
+const Secuencia = require('../models/secuencia');
 
 // Flujo principal:
 // DEUDOR -> PAGADA
@@ -200,57 +201,58 @@ const aplicarRecepcionOrden = async (orden, session, recepciones = null) => {
     return true;
 };
 
+const obtenerSiguienteNumeroOrden = async (session = null) => {
+    const ordenes = await OrdenCompra.find()
+        .select('numero')
+        .session(session)
+        .lean();
+    const ultimoNumero = ordenes.reduce((maximo, orden) => {
+        const numero = Number(orden.numero || 0);
+        return Number.isFinite(numero) && numero > maximo ? numero : maximo;
+    }, 0);
+
+    await Secuencia.updateOne(
+        { clave: 'ordenCompra' },
+        { $max: { valor: ultimoNumero } },
+        { upsert: true, session }
+    );
+
+    const secuencia = await Secuencia.findOneAndUpdate(
+        { clave: 'ordenCompra' },
+        { $inc: { valor: 1 } },
+        {
+            new: true,
+            upsert: true,
+            setDefaultsOnInsert: true,
+            session
+        }
+    );
+
+    return secuencia.valor;
+};
+
 const procesarItemsOrden = async (items = [], session = null) => {
     let totalOrden = 0;
 
-    const itemsProcesados = await Promise.all(
-        items.map(async (item) => {
-            if (!item?.articulo || !item?.cantidad) {
-                throw crearHttpError('Cada item debe tener articulo y cantidad');
-            }
+    const itemsProcesados = [];
+    for (const item of items) {
+        if (!item?.articulo || !item?.cantidad) {
+            throw crearHttpError('Cada item debe tener articulo y cantidad');
+        }
 
-            const articuloQuery = Articulo.findById(item.articulo);
-            const articulo = session ? await articuloQuery.session(session) : await articuloQuery;
+        const articuloQuery = Articulo.findById(item.articulo);
+        const articulo = session ? await articuloQuery.session(session) : await articuloQuery;
 
-            if (!articulo) {
-                throw crearHttpError('Articulo no encontrado');
-            }
+        if (!articulo) {
+            throw crearHttpError('Articulo no encontrado');
+        }
 
-            const talleNormalizado = normalizarTalle(item.talle);
-            const usaTalles = articuloUsaTalles(articulo);
+        const talleNormalizado = normalizarTalle(item.talle);
+        const usaTalles = articuloUsaTalles(articulo);
 
-            if (!usaTalles) {
-                const stockActual = Number(articulo.stock || 0);
-                const costeItem = obtenerCosteItem(articulo, null, item);
-                if (!Number.isFinite(costeItem) || costeItem < 0) {
-                    throw crearHttpError('Coste invalido para el item');
-                }
-
-                const costoTotal = item.cantidad * costeItem;
-                totalOrden += costoTotal;
-
-                return {
-                    articulo: articulo._id,
-                    talle: '',
-                    stockActual,
-                    cantidad: item.cantidad,
-                    cantidadRecibida: 0,
-                    coste: costeItem,
-                    costoTotal
-                };
-            }
-
-            if (!talleNormalizado) {
-                throw crearHttpError('Debe indicar talle para articulos que manejan talles');
-            }
-
-            const talleArticulo = obtenerTalleArticulo(articulo, talleNormalizado);
-            if (!talleArticulo) {
-                throw crearHttpError('El talle indicado no existe en el articulo');
-            }
-
-            const stockActual = Number(talleArticulo.stock || 0);
-            const costeItem = obtenerCosteItem(articulo, talleArticulo, item);
+        if (!usaTalles) {
+            const stockActual = Number(articulo.stock || 0);
+            const costeItem = obtenerCosteItem(articulo, null, item);
             if (!Number.isFinite(costeItem) || costeItem < 0) {
                 throw crearHttpError('Coste invalido para el item');
             }
@@ -258,24 +260,52 @@ const procesarItemsOrden = async (items = [], session = null) => {
             const costoTotal = item.cantidad * costeItem;
             totalOrden += costoTotal;
 
-            return {
+            itemsProcesados.push({
                 articulo: articulo._id,
-                talle: talleNormalizado,
+                talle: '',
                 stockActual,
                 cantidad: item.cantidad,
                 cantidadRecibida: 0,
                 coste: costeItem,
                 costoTotal
-            };
-        })
-    );
+            });
+            continue;
+        }
+
+        if (!talleNormalizado) {
+            throw crearHttpError('Debe indicar talle para articulos que manejan talles');
+        }
+
+        const talleArticulo = obtenerTalleArticulo(articulo, talleNormalizado);
+        if (!talleArticulo) {
+            throw crearHttpError('El talle indicado no existe en el articulo');
+        }
+
+        const stockActual = Number(talleArticulo.stock || 0);
+        const costeItem = obtenerCosteItem(articulo, talleArticulo, item);
+        if (!Number.isFinite(costeItem) || costeItem < 0) {
+            throw crearHttpError('Coste invalido para el item');
+        }
+
+        const costoTotal = item.cantidad * costeItem;
+        totalOrden += costoTotal;
+
+        itemsProcesados.push({
+            articulo: articulo._id,
+            talle: talleNormalizado,
+            stockActual,
+            cantidad: item.cantidad,
+            cantidadRecibida: 0,
+            coste: costeItem,
+            costoTotal
+        });
+    }
 
     return { itemsProcesados, totalOrden };
 };
 
 const construirPayloadOrden = async (data = {}, session = null) => {
     const {
-        numero,
         proveedor,
         fechaOrden,
         anotaciones,
@@ -309,7 +339,6 @@ const construirPayloadOrden = async (data = {}, session = null) => {
     const { itemsProcesados, totalOrden } = await procesarItemsOrden(items, session);
 
     return {
-        numero,
         proveedor,
         fechaOrden: parsearFechaOrden(fechaOrden),
         anotaciones,
@@ -326,7 +355,6 @@ const crearOrdenCompra = async (req, res) => {
 
     try {
         const {
-            numero,
             proveedor,
             fechaOrden,
             anotaciones,
@@ -334,6 +362,7 @@ const crearOrdenCompra = async (req, res) => {
             itemsProcesados,
             totalOrden
         } = await construirPayloadOrden(req.body, session);
+        const numero = await obtenerSiguienteNumeroOrden(session);
 
         const orden = new OrdenCompra({
             numero,
@@ -382,7 +411,6 @@ const modificarOrdenCompra = async (req, res) => {
         }
 
         const {
-            numero,
             proveedor,
             fechaOrden,
             anotaciones,
@@ -392,13 +420,11 @@ const modificarOrdenCompra = async (req, res) => {
         } = await construirPayloadOrden(
             {
                 ...req.body,
-                numero: req.body?.numero || orden.numero,
                 estado: req.body?.estado || orden.estado
             },
             session
         );
 
-        orden.numero = numero;
         orden.proveedor = proveedor;
         if (fechaOrden) orden.fechaOrden = fechaOrden;
         orden.anotaciones = anotaciones;

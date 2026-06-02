@@ -52,8 +52,10 @@ const itemOrdenSchema = new mongoose.Schema(
 const ordenCompraSchema = new mongoose.Schema(
     {
         numero: {
-            type: String,
-            trim: true
+            type: Number,
+            required: true,
+            unique: true,
+            index: true
         },
 
         proveedor: {

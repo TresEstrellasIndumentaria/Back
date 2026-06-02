@@ -1,4 +1,5 @@
 const Categoria = require("../models/categoriaArticulo");
+const Articulo = require("../models/articulo");
 const normalizar = require("../helpers/normalizaNombreArt");
 
 // ⬇ GET TODAS
@@ -106,9 +107,43 @@ const eliminarCategoria = async (req, res) => {
     }
 };
 
+// DESVINCULAR ARTICULO
+const desvincularArticulo = async (req, res) => {
+    const { id, articuloId } = req.params;
+
+    try {
+        const articulo = await Articulo.findById(articuloId);
+        if (!articulo) {
+            return res.status(404).json({ msg: "Articulo no encontrado" });
+        }
+
+        if (!articulo.categoria || String(articulo.categoria) !== id) {
+            return res.status(400).json({ msg: "El articulo no pertenece a esta categoria" });
+        }
+
+        articulo.categoria = null;
+        await articulo.save();
+
+        await Categoria.findByIdAndUpdate(id, {
+            $inc: { cantidadArticulos: -1 }
+        });
+
+        return res.json({
+            msg: "Articulo desvinculado correctamente",
+            articulo
+        });
+    } catch (error) {
+        return res.status(500).json({
+            msg: "Error al desvincular el articulo",
+            detalle: error.message
+        });
+    }
+};
+
 module.exports = {
     getCategorias,
     crearCategoria,
     editarCategoria,
-    eliminarCategoria
+    eliminarCategoria,
+    desvincularArticulo
 };

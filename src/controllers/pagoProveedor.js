@@ -28,6 +28,17 @@ const parsearFechaPago = (fechaPago) => {
 };
 
 const obtenerSiguienteNumeroPago = async () => {
+    const ultimoPago = await PagoProveedor.findOne()
+        .sort({ numeroPago: -1 })
+        .select('numeroPago')
+        .lean();
+
+    await Secuencia.updateOne(
+        { clave: 'pagoProveedor' },
+        { $max: { valor: Number(ultimoPago?.numeroPago || 0) } },
+        { upsert: true }
+    );
+
     const secuencia = await Secuencia.findOneAndUpdate(
         { clave: 'pagoProveedor' },
         { $inc: { valor: 1 } },

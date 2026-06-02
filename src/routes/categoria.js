@@ -5,12 +5,14 @@ const {
     getCategorias,
     crearCategoria,
     editarCategoria,
-    eliminarCategoria
+    eliminarCategoria,
+    desvincularArticulo
 } = require("../controllers/categoria");
 
 router.get("/", getCategorias);
 router.post("/", crearCategoria);
 router.put("/:id", editarCategoria);
+router.delete("/:id/articulos/:articuloId", desvincularArticulo);
 router.delete("/:id", eliminarCategoria);
 
 module.exports = router;

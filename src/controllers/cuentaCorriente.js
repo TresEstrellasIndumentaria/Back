@@ -11,6 +11,7 @@ const limpiarTexto = (valor) => {
 
 const normalizarFecha = (fecha) => new Date(fecha).getTime();
 const estadoCuentaPorSaldo = (saldo) => (Number(saldo || 0) > 0 ? 'DEUDOR' : 'PAGADA');
+const numeroOrdenFormateado = (orden) => `OC-${String(orden.numero || 0).padStart(6, '0')}`;
 
 const construirMovimientoRemito = (remito) => ({
     id: String(remito._id),
@@ -53,8 +54,8 @@ const construirMovimientoOrdenCompra = (orden) => ({
     id: String(orden._id),
     tipo: 'ORDEN_COMPRA',
     fecha: orden.fechaOrden || orden.createdAt,
-    numero: `OC-${String(orden._id).slice(-6).toUpperCase()}`,
-    comprobante: `OC-${String(orden._id).slice(-6).toUpperCase()}`,
+    numero: numeroOrdenFormateado(orden),
+    comprobante: numeroOrdenFormateado(orden),
     concepto: `Orden de compra ${orden.estado}`,
     estado: orden.estado,
     debe: Number(orden.totalOrden || 0),
