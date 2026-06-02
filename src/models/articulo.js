@@ -32,6 +32,18 @@ const ArticuloSchema = new Schema(
             default: 0
         },
 
+        coste: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
+        costo: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
         ultimoCostoCompra: {
             type: Number,
             default: 0,

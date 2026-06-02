@@ -10,7 +10,6 @@ const crearHttpError = (msg, status = 400) => {
     return error;
 };
 
-const ESTADOS_PARA_RECIBIR = ['DEUDOR'];
 const normalizarTalle = (talle) => String(talle || '').trim().toUpperCase();
 const parsearFechaOrden = (fechaOrden) => {
     if (!fechaOrden) return undefined;
@@ -33,16 +32,28 @@ const articuloUsaTalles = (articulo) => (
     Array.isArray(articulo?.talles)
     && articulo.talles.some((item) => normalizarTalle(item?.talle))
 );
-const claveItemOrden = (articulo, talle = '') => `${String(articulo)}::${normalizarTalle(talle)}`;
-
-const pendienteItem = (item) => {
-    const recibido = Number(item.cantidadRecibida || 0);
-    return Math.max(0, Number(item.cantidad || 0) - recibido);
-};
-
 const obtenerTalleArticulo = (articulo, talle) => {
     const talleNormalizado = normalizarTalle(talle);
     return articulo.talles.find((item) => normalizarTalle(item.talle) === talleNormalizado) || null;
+};
+
+const asegurarTalleUnicoArticulo = (articulo) => {
+    if (!Array.isArray(articulo.talles)) {
+        articulo.talles = [];
+    }
+
+    let talleArticulo = obtenerTalleArticulo(articulo, '');
+    if (!talleArticulo && articulo.talles.length === 0) {
+        articulo.talles.push({
+            talle: '',
+            precio: 0,
+            coste: Number(articulo.ultimoCostoCompra ?? articulo.coste ?? articulo.costo ?? 0),
+            stock: Number(articulo.stock || 0)
+        });
+        talleArticulo = articulo.talles[articulo.talles.length - 1];
+    }
+
+    return talleArticulo;
 };
 
 const obtenerCosteItem = (articulo, talleArticulo, item) => {
@@ -69,11 +80,19 @@ const actualizarUltimosCostosCompra = async (items = [], session = null) => {
             continue;
         }
 
-        await Articulo.findByIdAndUpdate(
-            item.articulo,
-            { ultimoCostoCompra },
-            { session }
-        );
+        const articulo = await Articulo.findById(item.articulo).session(session);
+        if (!articulo) continue;
+
+        articulo.ultimoCostoCompra = ultimoCostoCompra;
+        articulo.coste = ultimoCostoCompra;
+        articulo.costo = ultimoCostoCompra;
+
+        const talleArticulo = obtenerTalleArticulo(articulo, item.talle) || asegurarTalleUnicoArticulo(articulo);
+        if (talleArticulo) {
+            talleArticulo.coste = ultimoCostoCompra;
+        }
+
+        await guardarArticulo(articulo, session);
     }
 };
 
@@ -96,6 +115,10 @@ const ajustarArticuloPorItem = async (item, session, { stockDelta = 0 } = {}) =>
         }
 
         articulo.stock = nuevoStock;
+        const talleArticulo = asegurarTalleUnicoArticulo(articulo);
+        if (talleArticulo && articulo.talles.length === 1) {
+            talleArticulo.stock = nuevoStock;
+        }
         await guardarArticulo(articulo, session);
         return;
     }
@@ -118,87 +141,23 @@ const ajustarArticuloPorItem = async (item, session, { stockDelta = 0 } = {}) =>
     await guardarArticulo(articulo, session);
 };
 
-const construirMapaRecepcion = (recepciones = []) => {
-    if (!recepciones?.length) return null;
+const incorporarStockItemsOrden = async (items = [], session = null) => {
+    for (const item of items) {
+        const cantidad = Number(item.cantidad || 0);
+        if (cantidad <= 0) continue;
 
-    const mapa = new Map();
-    for (const recepcion of recepciones) {
-        const articulo = recepcion?.articulo;
-        const cantidad = Number(recepcion?.cantidad);
-        if (!articulo || !Number.isFinite(cantidad) || cantidad <= 0) {
-            throw crearHttpError('Cada recepcion parcial debe tener articulo y cantidad > 0');
-        }
-
-        const key = claveItemOrden(articulo, recepcion?.talle);
-        mapa.set(key, (mapa.get(key) || 0) + cantidad);
+        await ajustarArticuloPorItem(item, session, { stockDelta: cantidad });
+        item.cantidadStockAplicada = cantidad;
     }
-
-    return mapa;
 };
 
-const aplicarRecepcionOrden = async (orden, session, recepciones = null) => {
-    if (orden.estado === 'PAGADA') {
-        return false;
+const revertirStockIncorporadoItemsOrden = async (items = [], session = null) => {
+    for (const item of items) {
+        const cantidadStockAplicada = Number(item.cantidadStockAplicada ?? item.cantidadRecibida ?? 0);
+        if (cantidadStockAplicada <= 0) continue;
+
+        await ajustarArticuloPorItem(item, session, { stockDelta: -cantidadStockAplicada });
     }
-
-    if (!ESTADOS_PARA_RECIBIR.includes(orden.estado)) {
-        throw crearHttpError('La orden no esta en estado recibible');
-    }
-
-    const recepcionMap = construirMapaRecepcion(recepciones);
-    const pendientesPorArticulo = new Map();
-    for (const item of orden.items) {
-        const key = claveItemOrden(item.articulo, item.talle);
-        pendientesPorArticulo.set(key, (pendientesPorArticulo.get(key) || 0) + pendienteItem(item));
-    }
-
-    if (recepcionMap) {
-        for (const [itemKey, cantidad] of recepcionMap.entries()) {
-            const pendiente = pendientesPorArticulo.get(itemKey) || 0;
-            if (!pendiente) {
-                throw crearHttpError('El articulo/talle indicado no tiene pendiente en la orden');
-            }
-            if (cantidad > pendiente) {
-                throw crearHttpError('La cantidad a recibir no puede superar lo pendiente');
-            }
-        }
-    }
-
-    let totalRecibido = 0;
-    const itemsRecibidos = [];
-    for (const item of orden.items) {
-        const pendiente = pendienteItem(item);
-        if (pendiente <= 0) continue;
-
-        let cantidadARecibir = pendiente;
-        if (recepcionMap) {
-            const key = claveItemOrden(item.articulo, item.talle);
-            const restanteSolicitado = recepcionMap.get(key) || 0;
-            if (restanteSolicitado <= 0) continue;
-            cantidadARecibir = Math.min(pendiente, restanteSolicitado);
-            recepcionMap.set(key, restanteSolicitado - cantidadARecibir);
-        }
-
-        if (cantidadARecibir <= 0) continue;
-
-        await ajustarArticuloPorItem(item, session, {
-            stockDelta: cantidadARecibir
-        });
-
-        item.cantidadRecibida = Number(item.cantidadRecibida || 0) + cantidadARecibir;
-        totalRecibido += cantidadARecibir;
-        itemsRecibidos.push(item);
-    }
-
-    if (totalRecibido === 0) {
-        throw crearHttpError('No hay cantidades pendientes para recibir con los datos enviados');
-    }
-
-    const quedanPendientes = orden.items.some((item) => pendienteItem(item) > 0);
-    orden.estado = quedanPendientes ? 'DEUDOR' : 'PAGADA';
-    await actualizarUltimosCostosCompra(itemsRecibidos, session);
-    await orden.save({ session });
-    return true;
 };
 
 const obtenerSiguienteNumeroOrden = async (session = null) => {
@@ -265,7 +224,7 @@ const procesarItemsOrden = async (items = [], session = null) => {
                 talle: '',
                 stockActual,
                 cantidad: item.cantidad,
-                cantidadRecibida: 0,
+                cantidadStockAplicada: 0,
                 coste: costeItem,
                 costoTotal
             });
@@ -295,7 +254,7 @@ const procesarItemsOrden = async (items = [], session = null) => {
             talle: talleNormalizado,
             stockActual,
             cantidad: item.cantidad,
-            cantidadRecibida: 0,
+            cantidadStockAplicada: 0,
             coste: costeItem,
             costoTotal
         });
@@ -374,8 +333,10 @@ const crearOrdenCompra = async (req, res) => {
             totalOrden
         });
 
-        await orden.save({ session });
+        await incorporarStockItemsOrden(itemsProcesados, session);
         await actualizarUltimosCostosCompra(itemsProcesados, session);
+        orden.items = itemsProcesados;
+        await orden.save({ session });
 
         await session.commitTransaction();
 
@@ -405,11 +366,6 @@ const modificarOrdenCompra = async (req, res) => {
             throw crearHttpError('No se puede modificar una orden pagada');
         }
 
-        const tieneRecepciones = (orden.items || []).some((item) => Number(item.cantidadRecibida || 0) > 0);
-        if (tieneRecepciones) {
-            throw crearHttpError('No se puede modificar una orden con articulos ya recibidos');
-        }
-
         const {
             proveedor,
             fechaOrden,
@@ -424,6 +380,9 @@ const modificarOrdenCompra = async (req, res) => {
             },
             session
         );
+
+        await revertirStockIncorporadoItemsOrden(orden.items, session);
+        await incorporarStockItemsOrden(itemsProcesados, session);
 
         orden.proveedor = proveedor;
         if (fechaOrden) orden.fechaOrden = fechaOrden;
@@ -454,7 +413,7 @@ const obtenerOrdenesCompra = async (req, res) => {
     try {
         const {
             page = 1,
-            limit = 10,
+            limit,
             estado,
             proveedor,
             desde,
@@ -472,22 +431,29 @@ const obtenerOrdenesCompra = async (req, res) => {
             if (hasta) filtros.createdAt.$lte = new Date(hasta);
         }
 
-        const skip = (Number(page) - 1) * Number(limit);
+        const pageNumber = Math.max(1, Number(page) || 1);
+        const limitNumber = Number(limit);
+        const usaPaginacion = Number.isFinite(limitNumber) && limitNumber > 0;
+        const ordenesQuery = OrdenCompra.find(filtros)
+            .populate('proveedor', 'nombre apellido razonSocial numeroCliente numeroProveedor')
+            .populate('items.articulo', 'nombre codigoArticulo')
+            .sort({ createdAt: -1 });
+
+        if (usaPaginacion) {
+            ordenesQuery
+                .skip((pageNumber - 1) * limitNumber)
+                .limit(limitNumber);
+        }
 
         const [total, ordenes] = await Promise.all([
             OrdenCompra.countDocuments(filtros),
-            OrdenCompra.find(filtros)
-                .populate('proveedor', 'nombre apellido razonSocial numeroCliente numeroProveedor')
-                .populate('items.articulo', 'nombre codigoArticulo')
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(Number(limit))
+            ordenesQuery
         ]);
 
         res.json({
             total,
-            page: Number(page),
-            totalPages: Math.ceil(total / Number(limit)),
+            page: pageNumber,
+            totalPages: usaPaginacion ? Math.ceil(total / limitNumber) : 1,
             ordenes
         });
     } catch (error) {
@@ -550,32 +516,6 @@ const enviarOrdenCompra = async (req, res) => {
 
         await session.commitTransaction();
         res.json({ msg: 'Orden deudora', orden });
-    } catch (error) {
-        await session.abortTransaction();
-        res.status(error.status || 500).json({ msg: error.message });
-    } finally {
-        session.endSession();
-    }
-};
-
-// Recibir total o parcial -> suma stock
-const recibirOrdenCompra = async (req, res) => {
-    const session = await OrdenCompra.startSession();
-    session.startTransaction();
-
-    try {
-        const { id } = req.params;
-        const recepciones = Array.isArray(req.body?.items) ? req.body.items : null;
-
-        const orden = await OrdenCompra.findById(id).session(session);
-        if (!orden) throw crearHttpError('Orden no encontrada', 404);
-        const cambioRealizado = await aplicarRecepcionOrden(orden, session, recepciones);
-
-        await session.commitTransaction();
-        res.json({
-            msg: cambioRealizado ? `Recepcion registrada. Estado: ${orden.estado}` : 'La orden ya estaba recibida',
-            orden
-        });
     } catch (error) {
         await session.abortTransaction();
         res.status(error.status || 500).json({ msg: error.message });
@@ -652,10 +592,10 @@ const eliminarOrdenCompra = async (req, res) => {
         if (!orden) throw crearHttpError('Orden no encontrada', 404);
 
         for (const item of orden.items || []) {
-            const cantidadRecibida = Number(item.cantidadRecibida || 0);
-            if (cantidadRecibida > 0) {
+            const cantidadStockAplicada = Number(item.cantidadStockAplicada ?? item.cantidadRecibida ?? 0);
+            if (cantidadStockAplicada > 0) {
                 await ajustarArticuloPorItem(item, session, {
-                    stockDelta: -cantidadRecibida
+                    stockDelta: -cantidadStockAplicada
                 });
             }
         }
@@ -682,7 +622,6 @@ module.exports = {
     obtenerOrdenCompraPorId,
     obtenerOrdenesPorProveedor,
     enviarOrdenCompra,
-    recibirOrdenCompra,
     actualizarEstadoOrdenCompra,
     cancelarOrdenCompra,
     eliminarOrdenCompra

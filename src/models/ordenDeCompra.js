@@ -36,6 +36,12 @@ const itemOrdenSchema = new mongoose.Schema(
             min: 0
         },
 
+        cantidadStockAplicada: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+
         coste: {
             type: Number,
             required: true

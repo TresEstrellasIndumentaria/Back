@@ -356,6 +356,36 @@ const obtenerDescuentosPorAumentoStockCompuesto = (tallesActuales = [], tallesNu
         .filter(Boolean);
 };
 
+const normalizarArticuloProveedorParaRespuesta = (articulo) => {
+    const data = typeof articulo?.toObject === 'function' ? articulo.toObject() : articulo;
+    if (!data?.itemProveedor) return data;
+
+    const costeRaiz = Number(data.ultimoCostoCompra ?? data.costo ?? data.coste ?? 0);
+    const stockRaiz = Number(data.stock || 0);
+
+    if (!Array.isArray(data.talles) || data.talles.length === 0) {
+        data.talles = [{
+            talle: '',
+            precio: Number(data.precio || 0),
+            coste: costeRaiz,
+            stock: stockRaiz,
+            artCompuesto: false,
+            composicion: []
+        }];
+        return data;
+    }
+
+    if (data.talles.length === 1 && !claveTalle(data.talles[0]?.talle)) {
+        data.talles[0] = {
+            ...data.talles[0],
+            coste: costeRaiz,
+            stock: stockRaiz
+        };
+    }
+
+    return data;
+};
+
 
 // ================================
 // TRAER TODOS LOS ARTICULOS
@@ -365,7 +395,7 @@ const traerArticulos = async (req, res) => {
         const articulos = await Articulo.find()
             .populate('categoria', 'nombre')
             .populate('talles.composicion.articulo', 'nombre codigoArticulo codigo codArticulo talles stock coste costo precio itemProveedor');
-        res.json(articulos);
+        res.json(articulos.map(normalizarArticuloProveedorParaRespuesta));
     } catch (error) {
         res.status(500).json({ msg: 'Error al obtener los articulos', error: error.message });
     }
@@ -384,7 +414,7 @@ const traerArticulo = async (req, res) => {
         if (!articulo) {
             return res.status(404).json({ msg: 'Articulo no encontrado' });
         }
-        res.json(articulo);
+        res.json(normalizarArticuloProveedorParaRespuesta(articulo));
     } catch (error) {
         res.status(500).json({ msg: 'Error al obtener el articulo', error: error.message });
     }
