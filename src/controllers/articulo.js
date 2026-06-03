@@ -34,6 +34,18 @@ const parsearCoste = (coste, mensaje = 'Coste invalido. Debe ser un numero mayor
     return costeNumerico;
 };
 
+const obtenerCostoArticuloRaw = (body = {}) => {
+    if (body.ultimoCostoCompra !== undefined) return body.ultimoCostoCompra;
+    if (body.costo !== undefined) return body.costo;
+    return body.coste;
+};
+
+const sincronizarCostoArticulo = (articulo, costo) => {
+    articulo.ultimoCostoCompra = costo;
+    articulo.costo = costo;
+    articulo.coste = costo;
+};
+
 const claveTalle = (talle) => String(talle || '').trim().toUpperCase();
 const normalizarCodigoArticulo = (codigo) => String(codigo || '').trim().toUpperCase();
 const formatearCodigo = (value) => String(Number(value || 0)).padStart(4, '0');
@@ -437,8 +449,10 @@ const crearArticulo = async (req, res) => {
     let codigoArticulo = normalizarCodigoArticulo(req.body.codigoArticulo ?? req.body.codigo);
 
     try {
-        const ultimoCostoCompra = req.body.ultimoCostoCompra !== undefined
-            ? parsearCoste(req.body.ultimoCostoCompra, 'Ultimo costo de compra invalido')
+        const costoRaw = obtenerCostoArticuloRaw(req.body);
+        const costoRaizExplicito = costoRaw !== undefined;
+        let ultimoCostoCompra = costoRaizExplicito
+            ? parsearCoste(costoRaw, 'Ultimo costo de compra invalido')
             : 0;
 
         if (!nombre || nombre.trim() === '') {
@@ -482,6 +496,9 @@ const crearArticulo = async (req, res) => {
 
         const tallesNormalizados = normalizarTalles(talles, [], { itemProveedor: esItemProveedor }) ?? [];
         validarTallesDuplicados(tallesNormalizados);
+        if (!costoRaizExplicito && tallesNormalizados.length) {
+            ultimoCostoCompra = Number(tallesNormalizados[0]?.coste || 0);
+        }
         const stockProveedor = esItemProveedor
             ? Number(tallesNormalizados[0]?.stock || req.body.stock || 0)
             : 0;
@@ -494,6 +511,8 @@ const crearArticulo = async (req, res) => {
             itemProveedor: esItemProveedor,
             stock: stockProveedor,
             ultimoCostoCompra,
+            costo: ultimoCostoCompra,
+            coste: ultimoCostoCompra,
             talles: tallesNormalizados
         });
 
@@ -544,11 +563,12 @@ const modificarArticulo = async (req, res) => {
             articulo.itemProveedor = esItemProveedor;
         }
 
-        if (req.body.ultimoCostoCompra !== undefined) {
-            articulo.ultimoCostoCompra = parsearCoste(
-                req.body.ultimoCostoCompra,
-                'Ultimo costo de compra invalido'
-            );
+        const costoRaw = obtenerCostoArticuloRaw(req.body);
+        let costoRaizActualizado = false;
+        if (costoRaw !== undefined) {
+            const costo = parsearCoste(costoRaw, 'Ultimo costo de compra invalido');
+            sincronizarCostoArticulo(articulo, costo);
+            costoRaizActualizado = true;
         }
 
         if (req.body.codigoArticulo !== undefined || req.body.codigo !== undefined) {
@@ -596,6 +616,10 @@ const modificarArticulo = async (req, res) => {
             );
             articulo.talles = tallesNormalizados;
 
+            if (!costoRaizActualizado && tallesNormalizados.length) {
+                sincronizarCostoArticulo(articulo, Number(tallesNormalizados[0]?.coste || 0));
+            }
+
             if (esItemProveedor) {
                 articulo.stock = Number(tallesNormalizados[0]?.stock || 0);
             }
@@ -637,9 +661,14 @@ const modificarArticulo = async (req, res) => {
 
         await articulo.save();
 
+        const articuloActualizado = normalizarArticuloProveedorParaRespuesta(
+            await articulo.populate('categoria', 'nombre')
+        );
+
         res.json({
+            ...articuloActualizado,
             msg: 'Articulo modificado correctamente',
-            articulo: await articulo.populate('categoria', 'nombre'),
+            articulo: articuloActualizado,
             advertencias: resultadoComponentes?.advertencias || []
         });
     } catch (error) {
