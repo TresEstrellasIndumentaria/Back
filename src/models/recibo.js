@@ -13,6 +13,11 @@ const reciboSchema = new mongoose.Schema(
             required: true,
             trim: true
         },
+        remito: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Remito',
+            index: true
+        },
         razonSocial: {
             type: String,
             trim: true,

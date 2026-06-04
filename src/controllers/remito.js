@@ -26,6 +26,16 @@ const normalizarEstado = (estado) => {
     return estadoNormalizado || 'PENDIENTE';
 };
 
+const fechaDiaKey = (fecha) => {
+    const date = fecha ? new Date(fecha) : null;
+    if (!date || Number.isNaN(date.getTime())) return '';
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
 const claveTalle = (talle) => limpiarTexto(talle).toUpperCase();
 
 const normalizarCodigoArticulo = (codigo) => limpiarTexto(codigo).toUpperCase();
@@ -322,13 +332,22 @@ const aplicarImportesDebe = async (remitos = []) => {
             .select('_id numeroCliente estado importeTotal createdAt numeroRemito')
             .lean(),
         Recibo.find({ numeroCliente: { $in: numerosCliente } })
-            .select('numeroCliente importe')
+            .sort({ fechaCobro: 1, createdAt: 1 })
+            .select('numeroCliente importe fechaCobro createdAt remito')
             .lean()
     ]);
 
+    const cobrosPorRemito = {};
     const cobrosPorCliente = recibosCliente.reduce((acc, recibo) => {
+        if (recibo.remito) {
+            const remitoId = String(recibo.remito);
+            cobrosPorRemito[remitoId] = (cobrosPorRemito[remitoId] || 0) + Number(recibo.importe || 0);
+            return acc;
+        }
+
         const numeroCliente = limpiarTexto(recibo.numeroCliente);
-        acc[numeroCliente] = (acc[numeroCliente] || 0) + Number(recibo.importe || 0);
+        if (!acc[numeroCliente]) acc[numeroCliente] = [];
+        acc[numeroCliente].push(recibo);
         return acc;
     }, {});
 
@@ -342,13 +361,68 @@ const aplicarImportesDebe = async (remitos = []) => {
     const deudaPorRemito = {};
 
     Object.entries(remitosPorCliente).forEach(([numeroCliente, items]) => {
-        let saldoCobros = Number(cobrosPorCliente[numeroCliente] || 0);
+        const remitosConDeuda = items.map((remito) => {
+            const cobroAsociado = Number(cobrosPorRemito[String(remito._id)] || 0);
+            const totalRemito = Number(remito.importeTotal || 0);
 
-        items.forEach((remito) => {
-            const totalRemito = remito.estado === 'PAGADO' ? 0 : Number(remito.importeTotal || 0);
-            const aplicado = Math.min(totalRemito, saldoCobros);
-            saldoCobros = Math.max(0, saldoCobros - aplicado);
-            deudaPorRemito[String(remito._id)] = Math.max(0, totalRemito - aplicado);
+            return {
+                ...remito,
+                diaKey: fechaDiaKey(remito.createdAt),
+                deuda: cobroAsociado > 0
+                    ? Math.max(0, totalRemito - cobroAsociado)
+                    : remito.estado === 'PAGADO'
+                        ? 0
+                        : totalRemito
+            };
+        });
+
+        const aplicarCobro = (saldoInicial, candidatos) => {
+            let saldo = saldoInicial;
+
+            candidatos.forEach((remito) => {
+                if (saldo <= 0 || remito.deuda <= 0) return;
+                const aplicado = Math.min(remito.deuda, saldo);
+                remito.deuda = Math.max(0, remito.deuda - aplicado);
+                saldo = Math.max(0, saldo - aplicado);
+            });
+
+            return saldo;
+        };
+
+        (cobrosPorCliente[numeroCliente] || []).forEach((recibo) => {
+            let saldoCobro = Number(recibo.importe || 0);
+            if (saldoCobro <= 0) return;
+
+            const fechaCobro = recibo.fechaCobro || recibo.createdAt;
+            const diaCobro = fechaDiaKey(fechaCobro);
+            const timestampCobro = new Date(fechaCobro || 0).getTime();
+
+            saldoCobro = aplicarCobro(
+                saldoCobro,
+                remitosConDeuda.filter((remito) => remito.diaKey === diaCobro)
+            );
+
+            if (saldoCobro <= 0) return;
+
+            saldoCobro = aplicarCobro(
+                saldoCobro,
+                remitosConDeuda.filter((remito) => (
+                    !Number.isNaN(timestampCobro)
+                    && new Date(remito.createdAt || 0).getTime() <= timestampCobro
+                    && remito.diaKey !== diaCobro
+                ))
+            );
+
+            if (saldoCobro <= 0) return;
+
+            aplicarCobro(
+                saldoCobro,
+                remitosConDeuda.filter((remito) => remito.diaKey !== diaCobro)
+            );
+        });
+
+        remitosConDeuda.forEach((remito) => {
+            deudaPorRemito[String(remito._id)] = Math.max(0, remito.deuda);
         });
     });
 
@@ -804,17 +878,18 @@ const traerRemitosPorCliente = async (req, res) => {
         const remitos = await Remito.find({ numeroCliente: numeroClienteLimpio })
             .sort({ createdAt: -1 });
 
-        const totalDebe = remitos
-            .filter((remito) => remito.estado === 'PENDIENTE')
-            .reduce((acumulado, remito) => acumulado + Number(remito.importeTotal || 0), 0);
+        const remitosConRentabilidad = await Promise.all(remitos.map(normalizarRemitoConRentabilidad));
+        const remitosConImporteDebe = await aplicarImportesDebe(remitosConRentabilidad);
+        const totalDebe = remitosConImporteDebe
+            .reduce((acumulado, remito) => acumulado + Number(remito.importeDebe || 0), 0);
 
         return res.json({
             numeroCliente: numeroClienteLimpio,
-            totalRemitos: remitos.length,
-            totalPendientes: remitos.filter((remito) => remito.estado === 'PENDIENTE').length,
-            totalPagados: remitos.filter((remito) => remito.estado === 'PAGADO').length,
+            totalRemitos: remitosConImporteDebe.length,
+            totalPendientes: remitosConImporteDebe.filter((remito) => Number(remito.importeDebe || 0) > 0).length,
+            totalPagados: remitosConImporteDebe.filter((remito) => Number(remito.importeDebe || 0) <= 0).length,
             totalDebe,
-            remitos
+            remitos: remitosConImporteDebe
         });
     } catch (error) {
         return res.status(500).json({ msg: 'Error al obtener remitos del cliente', error: error.message });
