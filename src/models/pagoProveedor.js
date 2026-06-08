@@ -14,6 +14,11 @@ const pagoProveedorSchema = new mongoose.Schema(
             required: true,
             index: true
         },
+        ordenCompra: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'OrdenCompra',
+            index: true
+        },
         nombreProveedor: {
             type: String,
             required: true,
