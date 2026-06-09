@@ -20,13 +20,13 @@ router.use(verifyToken);
 router.use(isAdmin);
 
 
-// Crear orden (BORRADOR)
+// Crear orden (DEUDOR)
 router.post('/', crearOrdenCompra);
 router.put('/:id', modificarOrdenCompra);
 router.patch('/:id', modificarOrdenCompra);
 
 // Listado paginado + filtros
-// /api/ordenes-compra?page=1&limit=10&estado=ENVIADA&desde=2026-01-01&hasta=2026-01-31
+// /api/ordenes-compra?page=1&limit=10&estado=DEUDOR&desde=2026-01-01&hasta=2026-01-31
 router.get('/', obtenerOrdenesCompra);
 
 // Órdenes por proveedor (poner primero esta ruta, )
@@ -35,13 +35,13 @@ router.get('/proveedor/:proveedorId', obtenerOrdenesPorProveedor);
 // Orden por ID (detalle)
 router.get('/:id', obtenerOrdenCompraPorId);
 
-// Enviar orden (BORRADOR → ENVIADA)
+// Enviar orden (DEUDOR)
 router.put('/:id/enviar', enviarOrdenCompra);
 
 router.put('/:id/estado', actualizarEstadoOrdenCompra);
 router.patch('/:id/estado', actualizarEstadoOrdenCompra);
 
-// Cancelar orden (BORRADOR / ENVIADA → CANCELADA)
+// Cancelar orden (DEUDOR)
 router.put('/:id/cancelar', cancelarOrdenCompra);
 
 // Eliminar orden

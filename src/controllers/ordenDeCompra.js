@@ -1,6 +1,7 @@
 const OrdenCompra = require('../models/ordenDeCompra');
 const Articulo = require('../models/articulo');
 const Secuencia = require('../models/secuencia');
+const PagoProveedor = require('../models/pagoProveedor');
 
 // Flujo principal:
 // DEUDOR -> PAGADA
@@ -8,6 +9,44 @@ const crearHttpError = (msg, status = 400) => {
     const error = new Error(msg);
     error.status = status;
     return error;
+};
+
+const normalizarEstadoOrdenCompra = (estado) => (estado === 'PAGADA' ? 'PAGADA' : 'DEUDOR');
+const redondearImporte = (importe) => Math.round((Number(importe || 0) + Number.EPSILON) * 100) / 100;
+const serializarOrdenCompra = (orden) => {
+    if (!orden) return orden;
+    const data = typeof orden.toObject === 'function' ? orden.toObject() : orden;
+    return {
+        ...data,
+        estado: normalizarEstadoOrdenCompra(data.estado)
+    };
+};
+const anexarSaldosOrdenes = async (ordenes = []) => {
+    const ordenesSerializadas = ordenes.map(serializarOrdenCompra);
+    const ordenIds = ordenesSerializadas.map((orden) => orden?._id).filter(Boolean);
+
+    if (!ordenIds.length) return ordenesSerializadas;
+
+    const pagosPorOrden = await PagoProveedor.aggregate([
+        { $match: { ordenCompra: { $in: ordenIds } } },
+        { $group: { _id: '$ordenCompra', totalPagado: { $sum: { $ifNull: ['$importe', 0] } } } }
+    ]);
+    const pagosMap = new Map(pagosPorOrden.map((item) => [String(item._id), redondearImporte(item.totalPagado)]));
+
+    return ordenesSerializadas.map((orden) => {
+        const totalOrden = redondearImporte(orden.totalOrden);
+        const totalPagado = pagosMap.get(String(orden._id)) || 0;
+        const importeDebe = normalizarEstadoOrdenCompra(orden.estado) === 'PAGADA'
+            ? 0
+            : redondearImporte(Math.max(0, totalOrden - totalPagado));
+
+        return {
+            ...orden,
+            totalPagado,
+            importeDebe,
+            saldoOrden: importeDebe
+        };
+    });
 };
 
 const normalizarTalle = (talle) => String(talle || '').trim().toUpperCase();
@@ -450,11 +489,13 @@ const obtenerOrdenesCompra = async (req, res) => {
             ordenesQuery
         ]);
 
+        const ordenesConSaldo = await anexarSaldosOrdenes(ordenes);
+
         res.json({
             total,
             page: pageNumber,
             totalPages: usaPaginacion ? Math.ceil(total / limitNumber) : 1,
-            ordenes
+            ordenes: ordenesConSaldo
         });
     } catch (error) {
         res.status(500).json({ msg: error.message });
@@ -474,7 +515,8 @@ const obtenerOrdenCompraPorId = async (req, res) => {
             return res.status(404).json({ msg: 'Orden no encontrada' });
         }
 
-        res.json(orden);
+        const [ordenConSaldo] = await anexarSaldosOrdenes([orden]);
+        res.json(ordenConSaldo);
     } catch (error) {
         res.status(500).json({ msg: error.message });
     }
@@ -490,7 +532,7 @@ const obtenerOrdenesPorProveedor = async (req, res) => {
             .populate('items.articulo', 'nombre codigoArticulo')
             .sort({ createdAt: -1 });
 
-        res.json(ordenes);
+        res.json(await anexarSaldosOrdenes(ordenes));
     } catch (error) {
         res.status(500).json({ msg: error.message });
     }

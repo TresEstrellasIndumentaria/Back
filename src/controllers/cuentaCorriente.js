@@ -11,6 +11,7 @@ const limpiarTexto = (valor) => {
 
 const normalizarFecha = (fecha) => new Date(fecha).getTime();
 const estadoCuentaPorSaldo = (saldo) => (Number(saldo || 0) > 0 ? 'DEUDOR' : 'PAGADA');
+const normalizarEstadoOrdenCompra = (estado) => (estado === 'PAGADA' ? 'PAGADA' : 'DEUDOR');
 const numeroOrdenFormateado = (orden) => `OC-${String(orden.numero || 0).padStart(6, '0')}`;
 
 const construirMovimientoRemito = (remito) => ({
@@ -56,8 +57,8 @@ const construirMovimientoOrdenCompra = (orden) => ({
     fecha: orden.fechaOrden || orden.createdAt,
     numero: numeroOrdenFormateado(orden),
     comprobante: numeroOrdenFormateado(orden),
-    concepto: `Orden de compra ${orden.estado}`,
-    estado: orden.estado,
+    concepto: `Orden de compra ${normalizarEstadoOrdenCompra(orden.estado)}`,
+    estado: normalizarEstadoOrdenCompra(orden.estado),
     debe: Number(orden.totalOrden || 0),
     haber: 0,
     saldo: 0,
@@ -161,11 +162,10 @@ const traerCuentaCorrienteProveedor = async (req, res) => {
             return res.status(400).json({ msg: 'Proveedor invalido' });
         }
 
-        const estadosCompraCuenta = ['ENVIADA', 'PARCIALMENTE_RECIBIDA', 'RECIBIDA'];
         const [ordenes, pagos] = await Promise.all([
             OrdenCompra.find({
                 proveedor: proveedorLimpio,
-                estado: { $in: estadosCompraCuenta }
+                estado: { $ne: 'PAGADA' }
             })
                 .populate('proveedor', 'nombre apellido nombreApellido razonSocial')
                 .sort({ fechaOrden: 1, createdAt: 1 }),
