@@ -17,6 +17,7 @@ const remitoRoutes = require('./src/routes/remito');
 const reciboRoutes = require('./src/routes/recibo');
 const pagoProveedorRoutes = require('./src/routes/pagoProveedor');
 const cuentaCorrienteRoutes = require('./src/routes/cuentaCorriente');
+const informeRoutes = require('./src/routes/informe');
 
 
 const app = express();
@@ -42,6 +43,7 @@ const startServer = async () => {
   app.use('/recibos', reciboRoutes);
   app.use('/pagos-proveedor', pagoProveedorRoutes);
   app.use('/cuentas-corrientes', cuentaCorrienteRoutes);
+  app.use('/informes', informeRoutes);
 
   // Puerto
   const PORT = process.env.PORT || 3001;
