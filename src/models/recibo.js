@@ -11,7 +11,8 @@ const reciboSchema = new mongoose.Schema(
         numeroCliente: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
+            index: true
         },
         remito: {
             type: mongoose.Schema.Types.ObjectId,
@@ -54,6 +55,8 @@ const reciboSchema = new mongoose.Schema(
         toObject: { virtuals: true }
     }
 );
+
+reciboSchema.index({ numeroCliente: 1, fechaCobro: 1, createdAt: 1 });
 
 reciboSchema.virtual('numeroReciboFormateado').get(function () {
     return `RC-${String(this.numeroRecibo || 0).padStart(6, '0')}`;

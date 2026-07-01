@@ -128,10 +128,6 @@ const validarRemitoDelRecibo = async (payload, { reciboActual = null } = {}) => 
     }
 
     const pagoActual = await getPagoRemito(remitoId, { excluirReciboId: reciboActual?._id });
-    if (pagoActual.cantidad >= 2) {
-        throw new Error('El remito seleccionado ya tiene dos pagos registrados');
-    }
-
     const importe = Number(payload.importe ?? reciboActual?.importe ?? 0);
     const totalRemito = Number(remito.importeTotal || 0);
     if (pagoActual.total + importe > totalRemito) {

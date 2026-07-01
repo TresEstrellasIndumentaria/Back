@@ -368,11 +368,9 @@ const aplicarImportesDebe = async (remitos = []) => {
             return {
                 ...remito,
                 diaKey: fechaDiaKey(remito.createdAt),
-                deuda: cobroAsociado > 0
-                    ? Math.max(0, totalRemito - cobroAsociado)
-                    : remito.estado === 'PAGADO'
-                        ? 0
-                        : totalRemito
+                deuda: remito.estado === 'PAGADO'
+                    ? 0
+                    : Math.max(0, totalRemito - cobroAsociado)
             };
         });
 
@@ -411,13 +409,6 @@ const aplicarImportesDebe = async (remitos = []) => {
                     && new Date(remito.createdAt || 0).getTime() <= timestampCobro
                     && remito.diaKey !== diaCobro
                 ))
-            );
-
-            if (saldoCobro <= 0) return;
-
-            aplicarCobro(
-                saldoCobro,
-                remitosConDeuda.filter((remito) => remito.diaKey !== diaCobro)
             );
         });
 
@@ -790,7 +781,8 @@ const traerRemitos = async (req, res) => {
             Remito.find(filtros)
                 .sort({ createdAt: -1 })
                 .skip(skip)
-                .limit(limitNumber),
+                .limit(limitNumber)
+                .lean({ virtuals: true }),
             Remito.aggregate([
                 { $match: filtros },
                 {
@@ -876,7 +868,8 @@ const traerRemitosPorCliente = async (req, res) => {
         }
 
         const remitos = await Remito.find({ numeroCliente: numeroClienteLimpio })
-            .sort({ createdAt: -1 });
+            .sort({ createdAt: -1 })
+            .lean({ virtuals: true });
 
         const remitosConRentabilidad = await Promise.all(remitos.map(normalizarRemitoConRentabilidad));
         const remitosConImporteDebe = await aplicarImportesDebe(remitosConRentabilidad);

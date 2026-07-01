@@ -14,6 +14,109 @@ const estadoCuentaPorSaldo = (saldo) => (Number(saldo || 0) > 0 ? 'DEUDOR' : 'PA
 const normalizarEstadoOrdenCompra = (estado) => (estado === 'PAGADA' ? 'PAGADA' : 'DEUDOR');
 const numeroOrdenFormateado = (orden) => `OC-${String(orden.numero || 0).padStart(6, '0')}`;
 
+const fechaDiaKey = (fecha) => {
+    const date = fecha ? new Date(fecha) : null;
+    if (!date || Number.isNaN(date.getTime())) return '';
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+const getRemitoId = (valor) => {
+    if (!valor) return '';
+    return String(valor?._id || valor);
+};
+
+const aplicarImportesDebeCliente = (remitos = [], recibos = []) => {
+    const cobrosPorRemito = {};
+    const cobrosSinRemito = [];
+
+    recibos.forEach((recibo) => {
+        const remitoId = getRemitoId(recibo.remito);
+        if (remitoId) {
+            cobrosPorRemito[remitoId] = (cobrosPorRemito[remitoId] || 0) + Number(recibo.importe || 0);
+            return;
+        }
+
+        cobrosSinRemito.push(recibo);
+    });
+
+    const remitosConDeuda = remitos
+        .map((remito) => {
+            const cobroAsociado = Number(cobrosPorRemito[String(remito._id)] || 0);
+            const totalRemito = Number(remito.importeTotal || 0);
+
+            return {
+                ...remito,
+                diaKey: fechaDiaKey(remito.createdAt),
+                deuda: remito.estado === 'PAGADO'
+                    ? 0
+                    : Math.max(0, totalRemito - cobroAsociado)
+            };
+        })
+        .sort((a, b) => {
+            const fechaDiff = normalizarFecha(a.createdAt) - normalizarFecha(b.createdAt);
+            if (fechaDiff !== 0) return fechaDiff;
+            return Number(a.numeroRemito || 0) - Number(b.numeroRemito || 0);
+        });
+
+    const aplicarCobro = (saldoInicial, candidatos) => {
+        let saldo = saldoInicial;
+
+        candidatos.forEach((remito) => {
+            if (saldo <= 0 || remito.deuda <= 0) return;
+            const aplicado = Math.min(remito.deuda, saldo);
+            remito.deuda = Math.max(0, remito.deuda - aplicado);
+            saldo = Math.max(0, saldo - aplicado);
+        });
+
+        return saldo;
+    };
+
+    cobrosSinRemito
+        .sort((a, b) => {
+            const fechaDiff = normalizarFecha(a.fechaCobro || a.createdAt) - normalizarFecha(b.fechaCobro || b.createdAt);
+            if (fechaDiff !== 0) return fechaDiff;
+            return normalizarFecha(a.createdAt) - normalizarFecha(b.createdAt);
+        })
+        .forEach((recibo) => {
+            let saldoCobro = Number(recibo.importe || 0);
+            if (saldoCobro <= 0) return;
+
+            const fechaCobro = recibo.fechaCobro || recibo.createdAt;
+            const diaCobro = fechaDiaKey(fechaCobro);
+            const timestampCobro = new Date(fechaCobro || 0).getTime();
+
+            saldoCobro = aplicarCobro(
+                saldoCobro,
+                remitosConDeuda.filter((remito) => remito.diaKey === diaCobro)
+            );
+
+            if (saldoCobro <= 0) return;
+
+            saldoCobro = aplicarCobro(
+                saldoCobro,
+                remitosConDeuda.filter((remito) => (
+                    !Number.isNaN(timestampCobro)
+                    && new Date(remito.createdAt || 0).getTime() <= timestampCobro
+                    && remito.diaKey !== diaCobro
+                ))
+            );
+        });
+
+    const deudaPorRemito = remitosConDeuda.reduce((acc, remito) => {
+        acc[String(remito._id)] = Math.max(0, remito.deuda);
+        return acc;
+    }, {});
+
+    return remitos.map((remito) => ({
+        ...remito,
+        importeDebe: deudaPorRemito[String(remito._id)] ?? (remito.estado === 'PENDIENTE' ? Number(remito.importeTotal || 0) : 0)
+    }));
+};
+
 const construirMovimientoRemito = (remito) => ({
     id: String(remito._id),
     tipo: 'REMITO',
@@ -22,14 +125,15 @@ const construirMovimientoRemito = (remito) => ({
     comprobante: remito.numeroRemitoFormateado || `R-${String(remito.numeroRemito).padStart(6, '0')}`,
     concepto: `Remito ${remito.estado === 'PAGADO' ? 'pagado' : 'pendiente'}`,
     estado: remito.estado,
-    debe: remito.estado === 'PENDIENTE' ? Number(remito.importeTotal || 0) : 0,
+    debe: Number(remito.importeTotal || 0),
     haber: 0,
     saldo: 0,
     detalle: {
         remitoId: remito._id,
         subtotal: Number(remito.subtotal || 0),
         descuento: Number(remito.descuento || 0),
-        importeTotal: Number(remito.importeTotal || 0)
+        importeTotal: Number(remito.importeTotal || 0),
+        importeDebe: Number(remito.importeDebe || 0)
     }
 });
 
@@ -97,14 +201,21 @@ const traerCuentaCorrienteCliente = async (req, res) => {
         }
 
         const [remitos, recibos] = await Promise.all([
-            Remito.find({ numeroCliente: numeroClienteLimpio }).sort({ createdAt: 1 }),
-            Recibo.find({ numeroCliente: numeroClienteLimpio }).sort({ fechaCobro: 1, createdAt: 1 })
+            Remito.find({ numeroCliente: numeroClienteLimpio })
+                .sort({ createdAt: 1, numeroRemito: 1 })
+                .select('numeroRemito numeroCliente razonSocial nombreApellido estado subtotal descuento importeTotal createdAt')
+                .lean({ virtuals: true }),
+            Recibo.find({ numeroCliente: numeroClienteLimpio })
+                .sort({ fechaCobro: 1, createdAt: 1 })
+                .select('numeroRecibo numeroCliente remito razonSocial nombreApellido importe fechaCobro medioPago observaciones createdAt')
+                .lean({ virtuals: true })
         ]);
+        const remitosConImporteDebe = aplicarImportesDebeCliente(remitos, recibos);
 
-        const clienteBase = remitos[0] || recibos[0] || null;
+        const clienteBase = remitosConImporteDebe[0] || recibos[0] || null;
 
         const movimientos = [
-            ...remitos.map(construirMovimientoRemito),
+            ...remitosConImporteDebe.map(construirMovimientoRemito),
             ...recibos.map(construirMovimientoRecibo)
         ]
             .sort((a, b) => {
@@ -127,6 +238,10 @@ const traerCuentaCorrienteCliente = async (req, res) => {
         const totalDebe = movimientosConSaldo.reduce((acumulado, movimiento) => acumulado + Number(movimiento.debe || 0), 0);
         const totalHaber = movimientosConSaldo.reduce((acumulado, movimiento) => acumulado + Number(movimiento.haber || 0), 0);
         const saldo = totalDebe - totalHaber;
+        const deudaPendiente = remitosConImporteDebe.reduce(
+            (acumulado, remito) => acumulado + Number(remito.importeDebe || 0),
+            0
+        );
 
         return res.json({
             cliente: {
@@ -138,8 +253,9 @@ const traerCuentaCorrienteCliente = async (req, res) => {
                 totalDebe,
                 totalHaber,
                 saldo,
-                estado: estadoCuentaPorSaldo(saldo),
-                cantidadRemitos: remitos.length,
+                deudaPendiente,
+                estado: estadoCuentaPorSaldo(deudaPendiente),
+                cantidadRemitos: remitosConImporteDebe.length,
                 cantidadRecibos: recibos.length
             },
             movimientos: movimientosConSaldo

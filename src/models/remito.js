@@ -80,7 +80,8 @@ const remitoSchema = new mongoose.Schema(
         numeroCliente: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
+            index: true
         },
         razonSocial: {
             type: String,
@@ -153,6 +154,8 @@ const remitoSchema = new mongoose.Schema(
         toObject: { virtuals: true }
     }
 );
+
+remitoSchema.index({ numeroCliente: 1, createdAt: -1 });
 
 remitoSchema.virtual('numeroRemitoFormateado').get(function () {
     return `R-${String(this.numeroRemito || 0).padStart(6, '0')}`;
