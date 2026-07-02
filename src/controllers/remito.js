@@ -62,7 +62,8 @@ const validarPedido = (pedido) => {
     }
 
     return pedido.map((item, index) => {
-        const articulo = limpiarTexto(item?.articulo ?? item?.articuloId);
+        const articuloRaw = limpiarTexto(item?.articulo ?? item?.articuloId);
+        const articulo = mongoose.Types.ObjectId.isValid(articuloRaw) ? articuloRaw : '';
         const codigoArticulo = normalizarCodigoArticulo(item?.codigoArticulo ?? item?.codigo);
         const nombreCamiseta = limpiarTexto(item?.nombreCamiseta);
         const numero = limpiarTexto(item?.numero);
@@ -79,10 +80,6 @@ const validarPedido = (pedido) => {
 
         if (!Number.isInteger(cantidad) || cantidad <= 0) {
             throw new Error(`La cantidad del item ${index + 1} debe ser un entero mayor a 0`);
-        }
-
-        if (articulo && !mongoose.Types.ObjectId.isValid(articulo)) {
-            throw new Error(`El articulo del item ${index + 1} no es valido`);
         }
 
         const subtotalRaw = item?.subtotal ?? item?.importeTotal;
@@ -253,6 +250,12 @@ const aplicarAjusteEnStockRaiz = async ({
 };
 
 const describirItemPedido = (item) => item?.codigoArticulo || item?.prenda || item?.articulo || 'sin identificar';
+
+const crearAjusteStockRaiz = (articulo, cantidad) => ({
+    articulo,
+    tipo: 'stockRaiz',
+    cantidad
+});
 
 const getCostoTalle = (talle) => Number(talle?.coste ?? talle?.costo ?? talle?.ultimoCostoCompra ?? 0);
 
@@ -437,12 +440,8 @@ const prepararAjustesStockPedido = async (pedido = [], { factor = -1, onError = 
             const cantidadItem = Number(item.cantidad || 0) * factor;
             const tieneTalles = Array.isArray(articulo.talles) && articulo.talles.length;
 
-            if (articulo.itemProveedor || !tieneTalles) {
-                ajustes.push({
-                    articulo,
-                    tipo: 'stockRaiz',
-                    cantidad: cantidadItem
-                });
+            if (articulo.itemProveedor || !tieneTalles || !limpiarTexto(item.talle)) {
+                ajustes.push(crearAjusteStockRaiz(articulo, cantidadItem));
                 continue;
             }
 
@@ -917,8 +916,6 @@ const modificarRemito = async (req, res) => {
             remito.rentabilidad = Number(remito.importeTotal || 0) - remito.totalCosto;
         }
 
-        await remito.save();
-
         if (debeAjustarPedido) {
             await aplicarAjustesStock(ajustesRestaurar, {
                 motivo: 'AJUSTE_REMITO',
@@ -933,6 +930,8 @@ const modificarRemito = async (req, res) => {
                 tienda: req.body?.tienda
             });
         }
+
+        await remito.save();
 
         return res.json({
             msg: 'Remito modificado correctamente',
