@@ -329,6 +329,16 @@ const aplicarImportesDebe = async (remitos = []) => {
     const numerosCliente = [...new Set(remitos.map((remito) => limpiarTexto(remito.numeroCliente)).filter(Boolean))];
     if (!numerosCliente.length) return remitos;
 
+    const mediosPagoPorRemito = {};
+    const registrarMedioPagoRemito = (remitoId, medioPago) => {
+        const medioPagoLimpio = limpiarTexto(medioPago);
+        if (!remitoId || !medioPagoLimpio) return;
+
+        const key = String(remitoId);
+        if (!mediosPagoPorRemito[key]) mediosPagoPorRemito[key] = new Set();
+        mediosPagoPorRemito[key].add(medioPagoLimpio);
+    };
+
     const [remitosCliente, recibosCliente] = await Promise.all([
         Remito.find({ numeroCliente: { $in: numerosCliente } })
             .sort({ createdAt: 1, numeroRemito: 1 })
@@ -336,7 +346,7 @@ const aplicarImportesDebe = async (remitos = []) => {
             .lean(),
         Recibo.find({ numeroCliente: { $in: numerosCliente } })
             .sort({ fechaCobro: 1, createdAt: 1 })
-            .select('numeroCliente importe fechaCobro createdAt remito')
+            .select('numeroCliente importe fechaCobro createdAt remito medioPago')
             .lean()
     ]);
 
@@ -345,6 +355,7 @@ const aplicarImportesDebe = async (remitos = []) => {
         if (recibo.remito) {
             const remitoId = String(recibo.remito);
             cobrosPorRemito[remitoId] = (cobrosPorRemito[remitoId] || 0) + Number(recibo.importe || 0);
+            registrarMedioPagoRemito(remitoId, recibo.medioPago);
             return acc;
         }
 
@@ -377,7 +388,7 @@ const aplicarImportesDebe = async (remitos = []) => {
             };
         });
 
-        const aplicarCobro = (saldoInicial, candidatos) => {
+        const aplicarCobro = (saldoInicial, candidatos, medioPago) => {
             let saldo = saldoInicial;
 
             candidatos.forEach((remito) => {
@@ -385,6 +396,7 @@ const aplicarImportesDebe = async (remitos = []) => {
                 const aplicado = Math.min(remito.deuda, saldo);
                 remito.deuda = Math.max(0, remito.deuda - aplicado);
                 saldo = Math.max(0, saldo - aplicado);
+                registrarMedioPagoRemito(remito._id, medioPago);
             });
 
             return saldo;
@@ -400,7 +412,8 @@ const aplicarImportesDebe = async (remitos = []) => {
 
             saldoCobro = aplicarCobro(
                 saldoCobro,
-                remitosConDeuda.filter((remito) => remito.diaKey === diaCobro)
+                remitosConDeuda.filter((remito) => remito.diaKey === diaCobro),
+                recibo.medioPago
             );
 
             if (saldoCobro <= 0) return;
@@ -411,7 +424,8 @@ const aplicarImportesDebe = async (remitos = []) => {
                     !Number.isNaN(timestampCobro)
                     && new Date(remito.createdAt || 0).getTime() <= timestampCobro
                     && remito.diaKey !== diaCobro
-                ))
+                )),
+                recibo.medioPago
             );
         });
 
@@ -420,10 +434,16 @@ const aplicarImportesDebe = async (remitos = []) => {
         });
     });
 
-    return remitos.map((remito) => ({
-        ...remito,
-        importeDebe: deudaPorRemito[String(remito._id)] ?? (remito.estado === 'PENDIENTE' ? Number(remito.importeTotal || 0) : 0)
-    }));
+    return remitos.map((remito) => {
+        const mediosPago = Array.from(mediosPagoPorRemito[String(remito._id)] || []);
+
+        return {
+            ...remito,
+            importeDebe: deudaPorRemito[String(remito._id)] ?? (remito.estado === 'PENDIENTE' ? Number(remito.importeTotal || 0) : 0),
+            mediosPago,
+            medioPago: mediosPago.join(', ')
+        };
+    });
 };
 
 const prepararAjustesStockPedido = async (pedido = [], { factor = -1, onError = null } = {}) => {
